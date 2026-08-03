@@ -106,6 +106,7 @@ def obtener_lectura_medidor(imagen):
             st.error(f"❌ Error inesperado: {e}")
             return None
 
+
 # --- 2. CARGA DE BASE DE DATOS ---
 DIRECTORIO_ACTUAL = os.path.dirname(os.path.abspath(__file__))
 
@@ -149,6 +150,7 @@ except Exception as e:
   st.error(f"❌ Error al leer la base de datos: {e}")
   st.stop()
 
+
 # --- 3. INTERFAZ DE USUARIO ---
 st.subheader("1. Selección de Usuario")
 
@@ -183,6 +185,7 @@ with col1:
 with col2:
   cargo_fijo = st.number_input("Cargo Fijo (S/.)", value=2.00, step=0.50)
 
+
 # --- 4. ESCÁNER DE IMAGEN Y MODO MANUAL ---
 st.subheader("2. Ingreso de Lectura")
 opcion_ingreso = st.radio("Método de lectura:", ("Usar Cámara", "Subir Foto", "Ingreso Manual (Sin IA)"), horizontal=True)
@@ -215,6 +218,7 @@ elif opcion_ingreso == "Ingreso Manual (Sin IA)":
   if st.button("🚀 Calcular Recibo Manualmente", type="primary"):
       lectura_actual = lectura_manual_ingresada
       procesar_cobro = True
+
 
 # --- 6. MOTOR FINANCIERO, WHATSAPP, EXCEL Y PDF INDIVIDUAL ---
 if procesar_cobro and lectura_actual is not None:
@@ -256,55 +260,90 @@ if procesar_cobro and lectura_actual is not None:
         enlace_whatsapp = f"https://wa.me/{telefono_usuario}?text={mensaje_codificado}"
         st.markdown(f'<a href="{enlace_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:12px; border-radius:8px; width: 100%; cursor: pointer; border: none; font-weight: bold; margin-bottom: 10px;">📲 Enviar Cobro por WhatsApp</button></a>', unsafe_allow_html=True)
 
-      # B. PDF NATIVO REAL (REEMPLAZA EL BOTÓN ANTIGUO)
+      # --- B. PDF NATIVO REAL (DISEÑO PROFESIONAL) ---
       st.markdown("### 📄 Recibo Individual en PDF")
       
       pdf = FPDF()
       pdf.add_page()
-      pdf.set_font("Arial", "B", 16)
+      
+      # 1. Encabezado institucional
+      pdf.set_font("Arial", "B", 18)
+      pdf.set_text_color(0, 51, 102) 
       pdf.cell(190, 10, txt="ASOCIACION 4 DE ENERO", ln=True, align='C')
       pdf.set_font("Arial", "", 10)
+      pdf.set_text_color(100, 100, 100) 
       pdf.cell(190, 5, txt="Sector 7 - Iquitos | Suministro Interno", ln=True, align='C')
+      pdf.ln(5)
+      
+      pdf.set_draw_color(200, 200, 200)
       pdf.line(10, 30, 200, 30)
-      pdf.ln(10)
-      
-      pdf.set_font("Arial", "B", 12)
-      pdf.cell(40, 8, txt="Titular:", border=0)
-      pdf.set_font("Arial", "", 12)
-      pdf.cell(150, 8, txt=str(datos_usuario['Nombre']), border=0, ln=True)
-      
-      pdf.set_font("Arial", "B", 12)
-      pdf.cell(40, 8, txt="Direccion:", border=0)
-      pdf.set_font("Arial", "", 12)
-      pdf.cell(150, 8, txt=f"{datos_usuario['Calle']} MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}", border=0, ln=True)
-      pdf.line(10, 55, 200, 55)
       pdf.ln(5)
       
-      pdf.set_font("Arial", "", 12)
-      pdf.cell(80, 8, txt="Lectura Anterior:", border=0)
-      pdf.cell(50, 8, txt=f"{lectura_anterior} kWh", border=0, ln=True)
-      pdf.cell(80, 8, txt="Lectura Actual:", border=0)
-      pdf.cell(50, 8, txt=f"{lectura_actual} kWh", border=0, ln=True)
-      pdf.cell(80, 8, txt="Consumo Neto:", border=0)
-      pdf.cell(50, 8, txt=f"{consumo_neto:.1f} kWh", border=0, ln=True)
-      pdf.cell(80, 8, txt="Tarifa kWh:", border=0)
-      pdf.cell(50, 8, txt=f"S/. {tarifa_kwh:.2f}", border=0, ln=True)
-      pdf.cell(80, 8, txt="Cargo Fijo:", border=0)
-      pdf.cell(50, 8, txt=f"S/. {cargo_fijo:.2f}", border=0, ln=True)
-      pdf.line(10, 105, 200, 105)
+      # 2. Datos del Titular
+      pdf.set_text_color(0, 0, 0) 
+      pdf.set_font("Arial", "B", 11)
+      pdf.cell(30, 8, txt="Titular:", border=0)
+      pdf.set_font("Arial", "", 11)
+      pdf.cell(160, 8, txt=str(datos_usuario['Nombre']).upper(), border=0, ln=True)
+      
+      pdf.set_font("Arial", "B", 11)
+      pdf.cell(30, 8, txt="Direccion:", border=0)
+      pdf.set_font("Arial", "", 11)
+      pdf.multi_cell(160, 8, txt=f"{datos_usuario['Calle']} MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}".upper(), border=0)
       pdf.ln(5)
+      
+      # 3. Tabla de Desglose de Consumo
+      pdf.set_fill_color(240, 240, 240) 
+      pdf.set_draw_color(150, 150, 150) 
+      pdf.set_font("Arial", "B", 11)
+      pdf.cell(140, 8, txt=" Descripcion del Consumo", border=1, fill=True)
+      pdf.cell(50, 8, txt=" Importe", border=1, fill=True, align='R', ln=True)
+      
+      pdf.set_font("Arial", "", 11)
+      pdf.cell(140, 8, txt=f" Lectura Anterior: {lectura_anterior} kWh", border='LR')
+      pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+      
+      pdf.cell(140, 8, txt=f" Lectura Actual: {lectura_actual} kWh", border='LR')
+      pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+      
+      pdf.cell(140, 8, txt=f" Consumo Neto: {consumo_neto:.1f} kWh", border='LR')
+      pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+      
+      pdf.cell(140, 8, txt=f" Cargo por Energia (S/. {tarifa_kwh:.2f} x kWh)", border='LR')
+      pdf.cell(50, 8, txt=f"S/. {costo_consumo:.2f} ", border='LR', align='R', ln=True)
+      
+      pdf.cell(140, 8, txt=f" Cargo Fijo", border='LR')
+      pdf.cell(50, 8, txt=f"S/. {cargo_fijo:.2f} ", border='LR', align='R', ln=True)
+      
+      pdf.cell(140, 2, txt="", border='LRB')
+      pdf.cell(50, 2, txt="", border='LRB', ln=True)
+      pdf.ln(8)
+      
+      # 4. EL BLOQUE DE "TOTAL A PAGAR" 
+      pdf.set_fill_color(230, 240, 255) 
+      pdf.set_draw_color(0, 51, 102) 
+      pdf.set_line_width(0.6) 
       
       pdf.set_font("Arial", "B", 14)
-      pdf.cell(190, 10, txt=f"TOTAL A PAGAR: S/. {total_a_pagar:.2f}", ln=True, align='C')
-      pdf.set_font("Arial", "I", 10)
-      pdf.cell(190, 10, txt="Conserve este recibo para cualquier reclamo. ¡Gracias!", ln=True, align='C')
+      pdf.cell(90, 14, txt="", border=0) 
+      pdf.set_text_color(0, 51, 102) 
+      pdf.cell(50, 14, txt="TOTAL A PAGAR:", border='LTB', align='R', fill=True)
       
-      # Generar archivo en memoria
-      pdf_bytes = pdf.output(dest='S').encode('latin-1')
+      pdf.set_font("Arial", "B", 16)
+      pdf.set_text_color(204, 0, 0) 
+      pdf.cell(50, 14, txt=f"S/. {total_a_pagar:.2f}", border='RTB', align='C', fill=True, ln=True)
+      
+      # 5. Pie de página 
+      pdf.set_line_width(0.2)
+      pdf.set_text_color(120, 120, 120)
+      pdf.ln(12)
+      pdf.set_font("Arial", "I", 9)
+      pdf.cell(190, 10, txt="Conserve este recibo para cualquier reclamo. ¡Gracias por su puntualidad!", ln=True, align='C')
+      
+      pdf_bytes = pdf.output(dest='S').encode('latin-1', 'replace')
 
-      # Botón nativo de descarga
       st.download_button(
-          label="📥 Descargar Recibo en PDF",
+          label="📥 Descargar Recibo (PDF Oficial)",
           data=pdf_bytes,
           file_name=f"Recibo_{datos_usuario['Nombre'].replace(' ', '_')}.pdf",
           mime="application/pdf"
