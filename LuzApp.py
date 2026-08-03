@@ -7,18 +7,14 @@ import requests
 from PIL import Image
 import pandas as pd
 import streamlit as st
+from fpdf import FPDF
 
 # --- 1. CONFIGURACIÓN (BRANDING) ---
 st.set_page_config(page_title="Ramozi LuzApp - Asociación 4 de Enero", page_icon="⚡", layout="centered")
 
-# Tu clave de Google Cloud Console
 API_KEY = "AQ.Ab8RN6KRORBTPy37ez_9L8oDEntYDiwJBT09u4DwmUfVtlwQUQ"
 
 def obtener_lectura_medidor(imagen):
-    """
-    Motor de IA experto optimizado para la capa gratuita.
-    Reduce la imagen para ahorrar cuota y sincroniza los reintentos a 60 segundos.
-    """
     if not API_KEY or API_KEY == "":
         st.error("❌ La API Key no está configurada.")
         return None
@@ -85,7 +81,7 @@ def obtener_lectura_medidor(imagen):
             
             if response.status_code == 429:
                 if intento < max_reintentos - 1:
-                    st.toast(f"⏳ Límite gratuito alcanzado. Recargando cuota en {tiempo_espera}s... (Intento {intento + 1}/{max_reintentos})", icon="⏳")
+                    st.toast(f"⏳ Límite gratuito alcanzado. Recargando cuota en {tiempo_espera}s...", icon="⏳")
                     time.sleep(tiempo_espera)
                     continue 
                 else:
@@ -109,7 +105,6 @@ def obtener_lectura_medidor(imagen):
         except Exception as e:
             st.error(f"❌ Error inesperado: {e}")
             return None
-
 
 # --- 2. CARGA DE BASE DE DATOS ---
 DIRECTORIO_ACTUAL = os.path.dirname(os.path.abspath(__file__))
@@ -150,13 +145,11 @@ try:
     )
   else:
     df_usuarios["Telefono"] = ""
-
 except Exception as e:
   st.error(f"❌ Error al leer la base de datos: {e}")
   st.stop()
 
-
-# --- 3. INTERFAZ DE USUARIO (SELECCIÓN Y TARIFAS) ---
+# --- 3. INTERFAZ DE USUARIO ---
 st.subheader("1. Selección de Usuario")
 
 df_usuarios["Etiqueta"] = (
@@ -190,15 +183,14 @@ with col1:
 with col2:
   cargo_fijo = st.number_input("Cargo Fijo (S/.)", value=2.00, step=0.50)
 
-
 # --- 4. ESCÁNER DE IMAGEN Y MODO MANUAL ---
 st.subheader("2. Ingreso de Lectura")
-
 opcion_ingreso = st.radio("Método de lectura:", ("Usar Cámara", "Subir Foto", "Ingreso Manual (Sin IA)"), horizontal=True)
 
 imagen_medidor = None
 lectura_manual_ingresada = None
 lectura_actual = None
+procesar_cobro = False
 
 if opcion_ingreso == "Usar Cámara":
   imagen_capturada = st.camera_input("Toma la foto de la pantalla LCD")
@@ -213,22 +205,16 @@ else:
   st.info("💡 Modo Manual Activo: Ingresa la lectura actual directamente.")
   lectura_manual_ingresada = st.number_input("Lectura Actual del Medidor (kWh):", min_value=0.0, value=float(lectura_anterior), step=0.1, format="%.1f")
 
-
-# --- 5. DISPARADOR DE CÁLCULOS ---
-procesar_cobro = False
-
 if opcion_ingreso in ["Usar Cámara", "Subir Foto"] and imagen_medidor is not None:
   if st.button("🚀 Extraer Lectura con IA", type="primary"):
     with st.spinner("Analizando medidor con Inteligencia Artificial..."):
       lectura_actual = obtener_lectura_medidor(imagen_medidor)
       if lectura_actual is not None:
           procesar_cobro = True
-
 elif opcion_ingreso == "Ingreso Manual (Sin IA)":
   if st.button("🚀 Calcular Recibo Manualmente", type="primary"):
       lectura_actual = lectura_manual_ingresada
       procesar_cobro = True
-
 
 # --- 6. MOTOR FINANCIERO, WHATSAPP, EXCEL Y PDF INDIVIDUAL ---
 if procesar_cobro and lectura_actual is not None:
@@ -252,7 +238,7 @@ if procesar_cobro and lectura_actual is not None:
       st.write(f"- **Cargos Adicionales:** `S/. {cargo_fijo:.2f}`")
       st.markdown(f"## **Total a Cobrar: S/. {total_a_pagar:.2f}**")
 
-      # --- A. BOTÓN DE WHATSAPP ---
+      # A. WHATSAPP
       if not telefono_usuario or telefono_usuario == "nan":
         st.warning("⚠️ Este usuario no tiene número registrado.")
       else:
@@ -266,46 +252,67 @@ if procesar_cobro and lectura_actual is not None:
             f"💰 *TOTAL A PAGAR: S/. {total_a_pagar:.2f}*\n\n"
             f"Puedes realizar el pago mediante transferencia, Yape o Plin. ¡Gracias!"
         )
-        
         mensaje_codificado = urllib.parse.quote(mensaje_ws)
         enlace_whatsapp = f"https://wa.me/{telefono_usuario}?text={mensaje_codificado}"
-        
-        st.markdown(
-            f'<a href="{enlace_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:12px; border-radius:8px; width: 100%; cursor: pointer; border: none; font-weight: bold; margin-bottom: 10px;">📲 Enviar Cobro por WhatsApp</button></a>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<a href="{enlace_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:12px; border-radius:8px; width: 100%; cursor: pointer; border: none; font-weight: bold; margin-bottom: 10px;">📲 Enviar Cobro por WhatsApp</button></a>', unsafe_allow_html=True)
 
-      # --- B. DESCARGA DE RECIBO INDIVIDUAL EN PDF (VENTANA DE IMPRESIÓN) ---
-      st.markdown("### 📄 Recibo Individual para Impresión / PDF")
-      html_recibo = f"""
-      <div style="border: 2px solid #333; padding: 20px; border-radius: 10px; font-family: Arial; background-color: #fff; color: #000; max-width: 400px; margin: auto;">
-          <h3 style="text-align: center; margin-bottom: 5px;">ASOCIACIÓN 4 DE ENERO</h3>
-          <p style="text-align: center; font-size: 12px; color: #555; margin-top: 0;">Sector 7 - Iquitos | Suministro Interno</p>
-          <hr>
-          <p><b>Titular:</b> {datos_usuario['Nombre']}</p>
-          <p><b>Dirección:</b> {datos_usuario['Calle']} MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}</p>
-          <hr>
-          <p><b>Lectura Anterior:</b> {lectura_anterior} kWh</p>
-          <p><b>Lectura Actual:</b> {lectura_actual} kWh</p>
-          <p><b>Consumo Neto:</b> {consumo_neto:.1f} kWh</p>
-          <p><b>Tarifa kWh:</b> S/. {tarifa_kwh:.2f}</p>
-          <p><b>Cargo Fijo:</b> S/. {cargo_fijo:.2f}</p>
-          <hr>
-          <h2 style="text-align: center; color: #d9534f;">TOTAL: S/. {total_a_pagar:.2f}</h2>
-          <p style="text-align: center; font-size: 10px; margin-top: 15px;">Conserve este recibo para cualquier reclamo. ¡Gracias por su puntualidad!</p>
-      </div>
-      <br>
-      <div style="text-align: center;">
-          <button onclick="window.print()" style="background-color:#007BFF; color:white; padding:10px 20px; border:none; border-radius:5px; font-size:14px; font-weight:bold; cursor:pointer;">🖨️ Imprimir / Guardar Recibo en PDF</button>
-      </div>
-      """
-      st.markdown(html_recibo, unsafe_allow_html=True)
+      # B. PDF NATIVO REAL (REEMPLAZA EL BOTÓN ANTIGUO)
+      st.markdown("### 📄 Recibo Individual en PDF")
+      
+      pdf = FPDF()
+      pdf.add_page()
+      pdf.set_font("Arial", "B", 16)
+      pdf.cell(190, 10, txt="ASOCIACION 4 DE ENERO", ln=True, align='C')
+      pdf.set_font("Arial", "", 10)
+      pdf.cell(190, 5, txt="Sector 7 - Iquitos | Suministro Interno", ln=True, align='C')
+      pdf.line(10, 30, 200, 30)
+      pdf.ln(10)
+      
+      pdf.set_font("Arial", "B", 12)
+      pdf.cell(40, 8, txt="Titular:", border=0)
+      pdf.set_font("Arial", "", 12)
+      pdf.cell(150, 8, txt=str(datos_usuario['Nombre']), border=0, ln=True)
+      
+      pdf.set_font("Arial", "B", 12)
+      pdf.cell(40, 8, txt="Direccion:", border=0)
+      pdf.set_font("Arial", "", 12)
+      pdf.cell(150, 8, txt=f"{datos_usuario['Calle']} MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}", border=0, ln=True)
+      pdf.line(10, 55, 200, 55)
+      pdf.ln(5)
+      
+      pdf.set_font("Arial", "", 12)
+      pdf.cell(80, 8, txt="Lectura Anterior:", border=0)
+      pdf.cell(50, 8, txt=f"{lectura_anterior} kWh", border=0, ln=True)
+      pdf.cell(80, 8, txt="Lectura Actual:", border=0)
+      pdf.cell(50, 8, txt=f"{lectura_actual} kWh", border=0, ln=True)
+      pdf.cell(80, 8, txt="Consumo Neto:", border=0)
+      pdf.cell(50, 8, txt=f"{consumo_neto:.1f} kWh", border=0, ln=True)
+      pdf.cell(80, 8, txt="Tarifa kWh:", border=0)
+      pdf.cell(50, 8, txt=f"S/. {tarifa_kwh:.2f}", border=0, ln=True)
+      pdf.cell(80, 8, txt="Cargo Fijo:", border=0)
+      pdf.cell(50, 8, txt=f"S/. {cargo_fijo:.2f}", border=0, ln=True)
+      pdf.line(10, 105, 200, 105)
+      pdf.ln(5)
+      
+      pdf.set_font("Arial", "B", 14)
+      pdf.cell(190, 10, txt=f"TOTAL A PAGAR: S/. {total_a_pagar:.2f}", ln=True, align='C')
+      pdf.set_font("Arial", "I", 10)
+      pdf.cell(190, 10, txt="Conserve este recibo para cualquier reclamo. ¡Gracias!", ln=True, align='C')
+      
+      # Generar archivo en memoria
+      pdf_bytes = pdf.output(dest='S').encode('latin-1')
 
-      # --- C. DESCARGA DE REPORTE GENERAL EN EXCEL ---
+      # Botón nativo de descarga
+      st.download_button(
+          label="📥 Descargar Recibo en PDF",
+          data=pdf_bytes,
+          file_name=f"Recibo_{datos_usuario['Nombre'].replace(' ', '_')}.pdf",
+          mime="application/pdf"
+      )
+
+      # C. EXCEL
       st.markdown("---")
       st.markdown("### 📁 Reporte General de Consumos")
-      
-      # Creamos un registro temporal para exportar
       df_reporte = pd.DataFrame([{
           "Calle": datos_usuario["Calle"],
           "MZ": datos_usuario["MZ"],
@@ -316,16 +323,13 @@ if procesar_cobro and lectura_actual is not None:
           "Consumo_Neto_kWh": round(consumo_neto, 1),
           "Total_Pagar_Soles": round(total_a_pagar, 2)
       }])
-
-      # Convertimos el DataFrame a Excel en memoria
       output = io.BytesIO()
       with pd.ExcelWriter(output, engine='openpyxl') as writer:
-          df_reporte.to_excel(writer, index=False, sheet_name='Liquidacion_Asociacion')
+          df_reporte.to_excel(writer, index=False, sheet_name='Liquidacion')
       processed_data = output.getvalue()
-
       st.download_button(
-          label="📥 Descargar Reporte General en Excel",
+          label="📥 Descargar Reporte en Excel",
           data=processed_data,
-          file_name=f"Recibo_{datos_usuario['Nombre'].replace(' ', '_')}.xlsx",
+          file_name=f"Reporte_{datos_usuario['Nombre'].replace(' ', '_')}.xlsx",
           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       )
