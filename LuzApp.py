@@ -10,7 +10,7 @@ import streamlit as st
 from fpdf import FPDF
 
 # --- 1. CONFIGURACIÓN (BRANDING) ---
-st.set_page_config(page_title="Ramozi LuzApp - Asociación 4 de Enero", page_icon="⚡", layout="centered")
+st.set_page_config(page_title="Ramozi LuzApp - Asociación 4 de Enero", page_icon="⚡", layout="wide")
 
 API_KEY = "AQ.Ab8RN6KRORBTPy37ez_9L8oDEntYDiwJBT09u4DwmUfVtlwQUQ"
 
@@ -107,64 +107,82 @@ def obtener_lectura_medidor(imagen):
             return None
 
 
-# --- 2. CARGA DE BASE DE DATOS ---
+# --- 2. CARGA Y MEMORIA DE BASE DE DATOS (NUEVO) ---
 DIRECTORIO_ACTUAL = os.path.dirname(os.path.abspath(__file__))
 
+def cargar_datos_iniciales():
+    archivos_en_carpeta = os.listdir(DIRECTORIO_ACTUAL)
+    archivo_encontrado = None
+    for archivo in archivos_en_carpeta:
+        if archivo.lower().startswith("usuarios"):
+            archivo_encontrado = os.path.join(DIRECTORIO_ACTUAL, archivo)
+            break
+            
+    if not archivo_encontrado:
+        st.error("⚠️ Base de datos de usuarios no encontrada en GitHub.")
+        st.stop()
+        
+    try:
+        if archivo_encontrado.endswith(".xlsx") or archivo_encontrado.endswith(".xls"):
+            df = pd.read_excel(archivo_encontrado)
+        else:
+            df = pd.read_csv(archivo_encontrado, encoding="utf-8")
+            
+        df.columns = df.columns.str.strip()
+        if "Telefono" in df.columns:
+            df["Telefono"] = df["Telefono"].fillna("").astype(str).str.replace(r"\.0$", "", regex=True).str.replace(" ", "").str.replace("-", "").str.replace("+", "")
+        else:
+            df["Telefono"] = ""
+        return df
+    except Exception as e:
+        st.error(f"❌ Error al leer la base de datos: {e}")
+        st.stop()
+
+# Memoria de la sesión (Para no perder datos mientras cambias de usuario)
+if "df_usuarios" not in st.session_state:
+    st.session_state.df_usuarios = cargar_datos_iniciales()
+
+
+# --- BARRA LATERAL: DESCARGA DE BASE DE DATOS ACTUALIZADA ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/6009/6009864.png", width=100)
+    st.markdown("### 💾 Copia de Seguridad")
+    st.info("Cuando termines de procesar a todos los usuarios del mes, descarga la base de datos actualizada para el próximo mes.")
+    
+    # Generar Excel actualizado
+    output_db = io.BytesIO()
+    with pd.ExcelWriter(output_db, engine='openpyxl') as writer:
+        st.session_state.df_usuarios.to_excel(writer, index=False, sheet_name='Usuarios')
+    processed_db = output_db.getvalue()
+    
+    st.download_button(
+        label="📥 Descargar BD Actualizada",
+        data=processed_db,
+        file_name="usuarios_actualizado.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+# --- 3. INTERFAZ PRINCIPAL ---
 st.markdown("<h1 style='text-align: center; color: #1f77b4;'>⚡ Ramozi LuzApp</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; font-size: 18px; color: gray;'>Administración Asociación 4 de Enero - Sede Iquitos</p>", unsafe_allow_html=True)
 st.markdown("---")
 
-archivos_en_carpeta = os.listdir(DIRECTORIO_ACTUAL)
-archivo_encontrado = None
-
-for archivo in archivos_en_carpeta:
-  if archivo.lower().startswith("usuarios"):
-    archivo_encontrado = os.path.join(DIRECTORIO_ACTUAL, archivo)
-    break
-
-if not archivo_encontrado:
-  st.error(f"⚠️ Base de datos de usuarios no encontrada en la carpeta.")
-  st.stop()
-
-try:
-  if archivo_encontrado.endswith(".xlsx") or archivo_encontrado.endswith(".xls"):
-    df_usuarios = pd.read_excel(archivo_encontrado)
-  else:
-    df_usuarios = pd.read_csv(archivo_encontrado, encoding="utf-8")
-
-  df_usuarios.columns = df_usuarios.columns.str.strip()
-  
-  if "Telefono" in df_usuarios.columns:
-    df_usuarios["Telefono"] = (
-        df_usuarios["Telefono"]
-        .fillna("")
-        .astype(str)
-        .str.replace(r"\.0$", "", regex=True)
-        .str.replace(" ", "")
-        .str.replace("-", "")
-        .str.replace("+", "")
-    )
-  else:
-    df_usuarios["Telefono"] = ""
-except Exception as e:
-  st.error(f"❌ Error al leer la base de datos: {e}")
-  st.stop()
-
-
-# --- 3. INTERFAZ DE USUARIO ---
 st.subheader("1. Selección de Usuario")
 
-df_usuarios["Etiqueta"] = (
-    df_usuarios["Calle"].astype(str) + " | MZ " + 
-    df_usuarios["MZ"].astype(str) + " - Lote " + 
-    df_usuarios["Lote"].astype(str) + " | " + 
-    df_usuarios["Nombre"].astype(str)
+st.session_state.df_usuarios["Etiqueta"] = (
+    st.session_state.df_usuarios["Calle"].astype(str) + " | MZ " + 
+    st.session_state.df_usuarios["MZ"].astype(str) + " - Lote " + 
+    st.session_state.df_usuarios["Lote"].astype(str) + " | " + 
+    st.session_state.df_usuarios["Nombre"].astype(str)
 )
 
-opciones_usuarios = df_usuarios["Etiqueta"].dropna().tolist()
+opciones_usuarios = st.session_state.df_usuarios["Etiqueta"].dropna().tolist()
 usuario_seleccionado = st.selectbox("Busca por calle, lote o propietario:", opciones_usuarios)
 
-datos_usuario = df_usuarios[df_usuarios["Etiqueta"] == usuario_seleccionado].iloc[0]
+# Obtener índice del usuario para poder actualizarlo luego
+idx_usuario = st.session_state.df_usuarios[st.session_state.df_usuarios["Etiqueta"] == usuario_seleccionado].index[0]
+datos_usuario = st.session_state.df_usuarios.loc[idx_usuario]
 
 try:
     val_lectura = datos_usuario["Lectura_Anterior"]
@@ -177,7 +195,7 @@ except Exception:
 
 telefono_usuario = str(datos_usuario["Telefono"]).strip()
 
-st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Última lectura:** `{lectura_anterior} kWh`")
+st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Última lectura registrada:** `{lectura_anterior} kWh`")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -220,7 +238,7 @@ elif opcion_ingreso == "Ingreso Manual (Sin IA)":
       procesar_cobro = True
 
 
-# --- 6. MOTOR FINANCIERO, WHATSAPP, EXCEL Y PDF INDIVIDUAL ---
+# --- 5. MOTOR FINANCIERO Y ACTUALIZACIÓN DE MEMORIA ---
 if procesar_cobro and lectura_actual is not None:
     st.success(f"✅ Lectura actual procesada: **{lectura_actual} kWh**")
 
@@ -230,6 +248,9 @@ if procesar_cobro and lectura_actual is not None:
           "Verifica el número ingresado o la foto enviada."
       )
     else:
+      # Guardar la nueva lectura en la memoria para descargarla después
+      st.session_state.df_usuarios.at[idx_usuario, 'Lectura_Anterior'] = lectura_actual
+      
       consumo_neto = lectura_actual - lectura_anterior
       costo_consumo = consumo_neto * tarifa_kwh
       total_a_pagar = costo_consumo + cargo_fijo
@@ -260,13 +281,12 @@ if procesar_cobro and lectura_actual is not None:
         enlace_whatsapp = f"https://wa.me/{telefono_usuario}?text={mensaje_codificado}"
         st.markdown(f'<a href="{enlace_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:12px; border-radius:8px; width: 100%; cursor: pointer; border: none; font-weight: bold; margin-bottom: 10px;">📲 Enviar Cobro por WhatsApp</button></a>', unsafe_allow_html=True)
 
-      # --- B. PDF NATIVO REAL (DISEÑO PROFESIONAL) ---
+      # B. PDF NATIVO REAL (DISEÑO PROFESIONAL)
       st.markdown("### 📄 Recibo Individual en PDF")
       
       pdf = FPDF()
       pdf.add_page()
       
-      # 1. Encabezado institucional
       pdf.set_font("Arial", "B", 18)
       pdf.set_text_color(0, 51, 102) 
       pdf.cell(190, 10, txt="ASOCIACION 4 DE ENERO", ln=True, align='C')
@@ -279,7 +299,6 @@ if procesar_cobro and lectura_actual is not None:
       pdf.line(10, 30, 200, 30)
       pdf.ln(5)
       
-      # 2. Datos del Titular
       pdf.set_text_color(0, 0, 0) 
       pdf.set_font("Arial", "B", 11)
       pdf.cell(30, 8, txt="Titular:", border=0)
@@ -292,7 +311,6 @@ if procesar_cobro and lectura_actual is not None:
       pdf.multi_cell(160, 8, txt=f"{datos_usuario['Calle']} MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}".upper(), border=0)
       pdf.ln(5)
       
-      # 3. Tabla de Desglose de Consumo
       pdf.set_fill_color(240, 240, 240) 
       pdf.set_draw_color(150, 150, 150) 
       pdf.set_font("Arial", "B", 11)
@@ -319,7 +337,6 @@ if procesar_cobro and lectura_actual is not None:
       pdf.cell(50, 2, txt="", border='LRB', ln=True)
       pdf.ln(8)
       
-      # 4. EL BLOQUE DE "TOTAL A PAGAR" 
       pdf.set_fill_color(230, 240, 255) 
       pdf.set_draw_color(0, 51, 102) 
       pdf.set_line_width(0.6) 
@@ -333,7 +350,6 @@ if procesar_cobro and lectura_actual is not None:
       pdf.set_text_color(204, 0, 0) 
       pdf.cell(50, 14, txt=f"S/. {total_a_pagar:.2f}", border='RTB', align='C', fill=True, ln=True)
       
-      # 5. Pie de página 
       pdf.set_line_width(0.2)
       pdf.set_text_color(120, 120, 120)
       pdf.ln(12)
@@ -347,28 +363,4 @@ if procesar_cobro and lectura_actual is not None:
           data=pdf_bytes,
           file_name=f"Recibo_{datos_usuario['Nombre'].replace(' ', '_')}.pdf",
           mime="application/pdf"
-      )
-
-      # C. EXCEL
-      st.markdown("---")
-      st.markdown("### 📁 Reporte General de Consumos")
-      df_reporte = pd.DataFrame([{
-          "Calle": datos_usuario["Calle"],
-          "MZ": datos_usuario["MZ"],
-          "Lote": datos_usuario["Lote"],
-          "Propietario": datos_usuario["Nombre"],
-          "Lectura_Anterior": lectura_anterior,
-          "Lectura_Actual": lectura_actual,
-          "Consumo_Neto_kWh": round(consumo_neto, 1),
-          "Total_Pagar_Soles": round(total_a_pagar, 2)
-      }])
-      output = io.BytesIO()
-      with pd.ExcelWriter(output, engine='openpyxl') as writer:
-          df_reporte.to_excel(writer, index=False, sheet_name='Liquidacion')
-      processed_data = output.getvalue()
-      st.download_button(
-          label="📥 Descargar Reporte en Excel",
-          data=processed_data,
-          file_name=f"Reporte_{datos_usuario['Nombre'].replace(' ', '_')}.xlsx",
-          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       )
