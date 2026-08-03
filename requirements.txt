@@ -3,3 +3,4 @@ pandas
 Pillow
 requests
 openpyxl
+fpdf
