@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 from fpdf import FPDF
 
-# --- 1. CONFIGURACIÓN (BRANDING) ---
+# --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="Ramozi LuzApp - Asociación 4 de Enero", page_icon="⚡", layout="wide")
 
 API_KEY = "AQ.Ab8RN6KRORBTPy37ez_9L8oDEntYDiwJBT09u4DwmUfVtlwQUQ"
@@ -33,11 +33,7 @@ def obtener_lectura_medidor(imagen):
         req_list = requests.get(url_list, timeout=10)
         if req_list.status_code == 200:
             modelos_disponibles = req_list.json().get("models", [])
-            modelos_prioridad = [
-                "models/gemini-2.0-flash",
-                "models/gemini-1.5-flash", 
-                "models/gemini-1.5-flash-latest"
-            ]
+            modelos_prioridad = ["models/gemini-2.0-flash", "models/gemini-1.5-flash", "models/gemini-1.5-flash-latest"]
             nombres_disponibles = [m.get("name") for m in modelos_disponibles if "generateContent" in m.get("supportedGenerationMethods", [])]
             for mp in modelos_prioridad:
                 if mp in nombres_disponibles:
@@ -63,14 +59,7 @@ def obtener_lectura_medidor(imagen):
         "Devuelve SOLAMENTE los números. Nada de letras, nada de explicaciones."
     )
 
-    payload = {
-        "contents": [{
-            "parts": [
-                {"text": instruccion},
-                {"inline_data": {"mime_type": "image/jpeg", "data": img_str}}
-            ]
-        }]
-    }
+    payload = {"contents": [{"parts": [{"text": instruccion}, {"inline_data": {"mime_type": "image/jpeg", "data": img_str}}]}]}
 
     max_reintentos = 3
     tiempo_espera = 60 
@@ -78,52 +67,42 @@ def obtener_lectura_medidor(imagen):
     for intento in range(max_reintentos):
         try:
             response = requests.post(url_post, headers=headers, json=payload, timeout=40)
-            
             if response.status_code == 429:
                 if intento < max_reintentos - 1:
-                    st.toast(f"⏳ Límite gratuito alcanzado. Recargando cuota en {tiempo_espera}s...", icon="⏳")
+                    st.toast(f"⏳ Límite gratuito alcanzado. Recargando en {tiempo_espera}s...", icon="⏳")
                     time.sleep(tiempo_espera)
                     continue 
                 else:
-                    st.error("🛑 Tráfico máximo alcanzado. Utiliza la opción de 'Ingreso Manual' por ahora o intenta más tarde.")
+                    st.error("🛑 Tráfico máximo alcanzado. Utiliza la opción de 'Ingreso Manual'.")
                     return None
             elif response.status_code != 200:
-                st.error(f"❌ Error de Google ({response.status_code}): {response.text}")
+                st.error(f"❌ Error de Google ({response.status_code})")
                 return None
                 
             datos = response.json()
             texto_ia = datos['candidates'][0]['content']['parts'][0]['text']
-            texto_limpio = texto_ia.strip().replace(" ", "").replace(",", ".")
-            return float(texto_limpio)
+            return float(texto_ia.strip().replace(" ", "").replace(",", "."))
             
         except requests.exceptions.ConnectionError:
             st.error("📡 ERROR DE RED: Revisa tu conexión a internet.")
             return None
-        except ValueError:
-            st.error(f"⚠️ La IA no devolvió un formato numérico claro. Respuesta capturada: '{texto_ia}'")
-            return None
-        except Exception as e:
-            st.error(f"❌ Error inesperado: {e}")
+        except Exception:
+            st.error("⚠️ Error de lectura de IA.")
             return None
 
-
-# --- 2. CARGA Y MEMORIA DE BASE DE DATOS (NUEVO) ---
+# --- 2. CARGA Y MEMORIAS ---
 DIRECTORIO_ACTUAL = os.path.dirname(os.path.abspath(__file__))
 
 def cargar_datos_iniciales():
     archivos_en_carpeta = os.listdir(DIRECTORIO_ACTUAL)
-    archivo_encontrado = None
-    for archivo in archivos_en_carpeta:
-        if archivo.lower().startswith("usuarios"):
-            archivo_encontrado = os.path.join(DIRECTORIO_ACTUAL, archivo)
-            break
+    archivo_encontrado = next((os.path.join(DIRECTORIO_ACTUAL, f) for f in archivos_en_carpeta if f.lower().startswith("usuarios")), None)
             
     if not archivo_encontrado:
-        st.error("⚠️ Base de datos de usuarios no encontrada en GitHub.")
+        st.error("⚠️ Base de datos de usuarios no encontrada.")
         st.stop()
         
     try:
-        if archivo_encontrado.endswith(".xlsx") or archivo_encontrado.endswith(".xls"):
+        if archivo_encontrado.endswith((".xlsx", ".xls")):
             df = pd.read_excel(archivo_encontrado)
         else:
             df = pd.read_csv(archivo_encontrado, encoding="utf-8")
@@ -133,39 +112,77 @@ def cargar_datos_iniciales():
             df["Telefono"] = df["Telefono"].fillna("").astype(str).str.replace(r"\.0$", "", regex=True).str.replace(" ", "").str.replace("-", "").str.replace("+", "")
         else:
             df["Telefono"] = ""
+            
+        # NUEVO: Crear columnas de historial vacías si no existen
+        if "Lectura_Nueva" not in df.columns: df["Lectura_Nueva"] = 0.0
+        if "Consumo_Neto" not in df.columns: df["Consumo_Neto"] = 0.0
+        if "Total_Pagar" not in df.columns: df["Total_Pagar"] = 0.0
+            
         return df
     except Exception as e:
         st.error(f"❌ Error al leer la base de datos: {e}")
         st.stop()
 
-# Memoria de la sesión (Para no perder datos mientras cambias de usuario)
 if "df_usuarios" not in st.session_state:
     st.session_state.df_usuarios = cargar_datos_iniciales()
+if "procesados_hoy" not in st.session_state:
+    st.session_state.procesados_hoy = [] 
+if "recaudacion" not in st.session_state:
+    st.session_state.recaudacion = {} 
 
-
-# --- BARRA LATERAL: DESCARGA DE BASE DE DATOS ACTUALIZADA ---
+# --- BARRA LATERAL (DASHBOARD Y DOBLE DESCARGA) ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/6009/6009864.png", width=100)
-    st.markdown("### 💾 Copia de Seguridad")
-    st.info("Cuando termines de procesar a todos los usuarios del mes, descarga la base de datos actualizada para el próximo mes.")
+    st.markdown("### 💾 Guardar Trabajo")
+    st.warning("⚠️ Recuerda descargar tus archivos al finalizar el día.")
     
-    # Generar Excel actualizado
-    output_db = io.BytesIO()
-    with pd.ExcelWriter(output_db, engine='openpyxl') as writer:
-        st.session_state.df_usuarios.to_excel(writer, index=False, sheet_name='Usuarios')
-    processed_db = output_db.getvalue()
+    # DESCARGA 1: REPORTE HISTÓRICO COMPLETO
+    output_reporte = io.BytesIO()
+    with pd.ExcelWriter(output_reporte, engine='openpyxl') as writer:
+        st.session_state.df_usuarios.to_excel(writer, index=False, sheet_name='Reporte_Auditoria')
     
     st.download_button(
-        label="📥 Descargar BD Actualizada",
-        data=processed_db,
-        file_name="usuarios_actualizado.xlsx",
+        label="📊 1. Descargar Reporte del Mes",
+        data=output_reporte.getvalue(),
+        file_name="Reporte_Historial_Mes.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
+    
+    # DESCARGA 2: ARCHIVO PREPARADO PARA EL PRÓXIMO MES
+    df_proximo = st.session_state.df_usuarios.copy()
+    # Mueve la Lectura_Nueva a Lectura_Anterior SOLO a los usuarios que cobramos
+    mask = df_proximo['Nombre'].isin(st.session_state.procesados_hoy)
+    df_proximo.loc[mask, 'Lectura_Anterior'] = df_proximo.loc[mask, 'Lectura_Nueva']
+    
+    output_db = io.BytesIO()
+    with pd.ExcelWriter(output_db, engine='openpyxl') as writer:
+        # Filtramos para guardar solo las columnas base y dejar el archivo limpio
+        cols_base = [c for c in df_proximo.columns if c not in ["Lectura_Nueva", "Consumo_Neto", "Total_Pagar", "Etiqueta"]]
+        df_proximo[cols_base].to_excel(writer, index=False, sheet_name='Usuarios')
+        
+    st.download_button(
+        label="💾 2. Descargar BD (Próximo Mes)",
+        data=output_db.getvalue(),
+        file_name="usuarios.xlsx", # Mismo nombre para reemplazar fácil en GitHub
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+    
+    st.markdown("---")
+    st.markdown("### 💰 Panel de Recaudación")
+    total_recaudado = sum(st.session_state.recaudacion.values())
+    st.metric(label="Total Facturado Hoy", value=f"S/. {total_recaudado:.2f}")
+    
+    total_usuarios = len(st.session_state.df_usuarios)
+    leidos = len(st.session_state.procesados_hoy)
+    st.progress(leidos / total_usuarios if total_usuarios > 0 else 0)
+    st.caption(f"📊 Medidores leídos: **{leidos} de {total_usuarios}**")
+
 
 # --- 3. INTERFAZ PRINCIPAL ---
 st.markdown("<h1 style='text-align: center; color: #1f77b4;'>⚡ Ramozi LuzApp</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; font-size: 18px; color: gray;'>Administración Asociación 4 de Enero - Sede Iquitos</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-size: 18px; color: gray;'>Administración Asociación 4 de Enero</p>", unsafe_allow_html=True)
 st.markdown("---")
 
 st.subheader("1. Selección de Usuario")
@@ -177,25 +194,32 @@ st.session_state.df_usuarios["Etiqueta"] = (
     st.session_state.df_usuarios["Nombre"].astype(str)
 )
 
-opciones_usuarios = st.session_state.df_usuarios["Etiqueta"].dropna().tolist()
+filtro_usuarios = st.radio("Filtro de búsqueda:", ("Solo Pendientes", "Todos los Usuarios"), horizontal=True)
+
+if filtro_usuarios == "Solo Pendientes":
+    df_filtrado = st.session_state.df_usuarios[~st.session_state.df_usuarios["Nombre"].isin(st.session_state.procesados_hoy)].copy()
+    if df_filtrado.empty:
+        st.success("🎉 ¡Felicidades! Has terminado de leer todos los medidores de la asociación.")
+        st.stop()
+else:
+    df_filtrado = st.session_state.df_usuarios.copy()
+
+opciones_usuarios = df_filtrado["Etiqueta"].dropna().tolist()
 usuario_seleccionado = st.selectbox("Busca por calle, lote o propietario:", opciones_usuarios)
 
-# Obtener índice del usuario para poder actualizarlo luego
 idx_usuario = st.session_state.df_usuarios[st.session_state.df_usuarios["Etiqueta"] == usuario_seleccionado].index[0]
 datos_usuario = st.session_state.df_usuarios.loc[idx_usuario]
+nombre_actual = datos_usuario['Nombre']
 
 try:
-    val_lectura = datos_usuario["Lectura_Anterior"]
-    if pd.isna(val_lectura) or str(val_lectura).strip() == "":
-        lectura_anterior = 0.0
-    else:
-        lectura_anterior = float(val_lectura)
-except Exception:
+    lectura_anterior = float(datos_usuario["Lectura_Anterior"]) if pd.notna(datos_usuario["Lectura_Anterior"]) else 0.0
+except:
     lectura_anterior = 0.0
 
-telefono_usuario = str(datos_usuario["Telefono"]).strip()
+if nombre_actual in st.session_state.procesados_hoy:
+    st.success("✅ **¡Este medidor ya fue leído y facturado en esta sesión!**")
 
-st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Última lectura registrada:** `{lectura_anterior} kWh`")
+st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Lectura Registrada Anterior:** `{lectura_anterior} kWh`")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -203,9 +227,22 @@ with col1:
 with col2:
   cargo_fijo = st.number_input("Cargo Fijo (S/.)", value=2.00, step=0.50)
 
+# BOTÓN DE DESHACER (Actualizado para borrar el historial reciente)
+if nombre_actual in st.session_state.procesados_hoy:
+    st.warning("Detectamos que actualizaste este medidor recientemente. ¿Hubo un error?")
+    if st.button("↩️ Deshacer y Borrar Lectura Actual", type="secondary"):
+        # Reseteamos los valores nuevos
+        st.session_state.df_usuarios.at[idx_usuario, 'Lectura_Nueva'] = 0.0
+        st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = 0.0
+        st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = 0.0
+        
+        st.session_state.procesados_hoy.remove(nombre_actual)
+        if nombre_actual in st.session_state.recaudacion:
+            del st.session_state.recaudacion[nombre_actual] 
+        st.rerun()
 
-# --- 4. ESCÁNER DE IMAGEN Y MODO MANUAL ---
-st.subheader("2. Ingreso de Lectura")
+st.markdown("---")
+st.subheader("2. Ingreso de Nueva Lectura")
 opcion_ingreso = st.radio("Método de lectura:", ("Usar Cámara", "Subir Foto", "Ingreso Manual (Sin IA)"), horizontal=True)
 
 imagen_medidor = None
@@ -223,144 +260,85 @@ elif opcion_ingreso == "Subir Foto":
     imagen_medidor = Image.open(imagen_subida)
     st.image(imagen_medidor, use_column_width=True)
 else:
-  st.info("💡 Modo Manual Activo: Ingresa la lectura actual directamente.")
   lectura_manual_ingresada = st.number_input("Lectura Actual del Medidor (kWh):", min_value=0.0, value=float(lectura_anterior), step=0.1, format="%.1f")
 
 if opcion_ingreso in ["Usar Cámara", "Subir Foto"] and imagen_medidor is not None:
-  if st.button("🚀 Extraer Lectura con IA", type="primary"):
-    with st.spinner("Analizando medidor con Inteligencia Artificial..."):
+  if st.button("🚀 Extraer y Calcular", type="primary"):
+    with st.spinner("Analizando medidor..."):
       lectura_actual = obtener_lectura_medidor(imagen_medidor)
-      if lectura_actual is not None:
-          procesar_cobro = True
+      if lectura_actual is not None: procesar_cobro = True
 elif opcion_ingreso == "Ingreso Manual (Sin IA)":
   if st.button("🚀 Calcular Recibo Manualmente", type="primary"):
       lectura_actual = lectura_manual_ingresada
       procesar_cobro = True
 
-
-# --- 5. MOTOR FINANCIERO Y ACTUALIZACIÓN DE MEMORIA ---
+# --- 5. MOTOR FINANCIERO Y RENDERING ---
 if procesar_cobro and lectura_actual is not None:
-    st.success(f"✅ Lectura actual procesada: **{lectura_actual} kWh**")
-
     if lectura_actual < lectura_anterior:
-      st.error(
-          f"🛑 **ERROR:** La lectura actual ({lectura_actual} kWh) es menor a la del mes pasado ({lectura_anterior} kWh). "
-          "Verifica el número ingresado o la foto enviada."
-      )
+      st.error(f"🛑 **ERROR:** La lectura nueva ({lectura_actual}) es menor a la anterior ({lectura_anterior}).")
     else:
-      # Guardar la nueva lectura en la memoria para descargarla después
-      st.session_state.df_usuarios.at[idx_usuario, 'Lectura_Anterior'] = lectura_actual
-      
       consumo_neto = lectura_actual - lectura_anterior
       costo_consumo = consumo_neto * tarifa_kwh
       total_a_pagar = costo_consumo + cargo_fijo
 
-      st.markdown("---")
-      st.markdown("### 📊 Liquidación Oficial - Asociación 4 de Enero")
-      st.write(f"- **Titular:** {datos_usuario['Nombre']}")
+      # NUEVO: Guardar en el historial SIN tocar la Lectura Anterior
+      st.session_state.df_usuarios.at[idx_usuario, 'Lectura_Nueva'] = lectura_actual
+      st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = consumo_neto
+      st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = total_a_pagar
+      
+      if nombre_actual not in st.session_state.procesados_hoy:
+          st.session_state.procesados_hoy.append(nombre_actual)
+      
+      st.session_state.recaudacion[nombre_actual] = total_a_pagar
+
+      st.success("✅ **Lectura guardada temporalmente. ¡El Panel de Recaudación se ha actualizado!**")
+      st.markdown("### 📊 Liquidación Oficial")
       st.write(f"- **Consumo Neto:** `{consumo_neto:.1f} kWh`")
-      st.write(f"- **Subtotal (Energía):** `S/. {costo_consumo:.2f}`")
-      st.write(f"- **Cargos Adicionales:** `S/. {cargo_fijo:.2f}`")
       st.markdown(f"## **Total a Cobrar: S/. {total_a_pagar:.2f}**")
 
       # A. WHATSAPP
-      if not telefono_usuario or telefono_usuario == "nan":
-        st.warning("⚠️ Este usuario no tiene número registrado.")
-      else:
-        mensaje_ws = (
-            f"⚡ *ASOCIACIÓN 4 DE ENERO* - Recibo de Luz\n\n"
-            f"Hola *{datos_usuario['Nombre']}*, te enviamos el detalle de tu consumo:\n"
-            f"📍 *Ubicación:* {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}\n"
-            f"- Lectura anterior: {lectura_anterior} kWh\n"
-            f"- Lectura actual: {lectura_actual} kWh\n"
-            f"- Consumo neto: {consumo_neto:.1f} kWh\n\n"
-            f"💰 *TOTAL A PAGAR: S/. {total_a_pagar:.2f}*\n\n"
-            f"Puedes realizar el pago mediante transferencia, Yape o Plin. ¡Gracias!"
-        )
-        mensaje_codificado = urllib.parse.quote(mensaje_ws)
-        enlace_whatsapp = f"https://wa.me/{telefono_usuario}?text={mensaje_codificado}"
+      telefono_usuario = str(datos_usuario["Telefono"]).strip()
+      if telefono_usuario and telefono_usuario != "nan":
+        mensaje_ws = f"⚡ *ASOCIACIÓN 4 DE ENERO* - Recibo de Luz\nHola *{nombre_actual}*, te enviamos el detalle de tu consumo:\n📍 *Ubicación:* {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}\n- Lectura anterior: {lectura_anterior} kWh\n- Lectura actual: {lectura_actual} kWh\n- Consumo neto: {consumo_neto:.1f} kWh\n\n💰 *TOTAL A PAGAR: S/. {total_a_pagar:.2f}*\n\nPuedes realizar el pago mediante transferencia, Yape o Plin. ¡Gracias!"
+        enlace_whatsapp = f"https://wa.me/{telefono_usuario}?text={urllib.parse.quote(mensaje_ws)}"
         st.markdown(f'<a href="{enlace_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:12px; border-radius:8px; width: 100%; cursor: pointer; border: none; font-weight: bold; margin-bottom: 10px;">📲 Enviar Cobro por WhatsApp</button></a>', unsafe_allow_html=True)
 
-      # B. PDF NATIVO REAL (DISEÑO PROFESIONAL)
-      st.markdown("### 📄 Recibo Individual en PDF")
-      
+      # B. PDF 
       pdf = FPDF()
       pdf.add_page()
-      
-      pdf.set_font("Arial", "B", 18)
-      pdf.set_text_color(0, 51, 102) 
+      pdf.set_font("Arial", "B", 18); pdf.set_text_color(0, 51, 102) 
       pdf.cell(190, 10, txt="ASOCIACION 4 DE ENERO", ln=True, align='C')
-      pdf.set_font("Arial", "", 10)
-      pdf.set_text_color(100, 100, 100) 
+      pdf.set_font("Arial", "", 10); pdf.set_text_color(100, 100, 100) 
       pdf.cell(190, 5, txt="Sector 7 - Iquitos | Suministro Interno", ln=True, align='C')
-      pdf.ln(5)
+      pdf.ln(5); pdf.set_draw_color(200, 200, 200); pdf.line(10, 30, 200, 30); pdf.ln(5)
       
-      pdf.set_draw_color(200, 200, 200)
-      pdf.line(10, 30, 200, 30)
-      pdf.ln(5)
-      
-      pdf.set_text_color(0, 0, 0) 
-      pdf.set_font("Arial", "B", 11)
+      pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", "B", 11)
       pdf.cell(30, 8, txt="Titular:", border=0)
-      pdf.set_font("Arial", "", 11)
-      pdf.cell(160, 8, txt=str(datos_usuario['Nombre']).upper(), border=0, ln=True)
+      pdf.set_font("Arial", "", 11); pdf.cell(160, 8, txt=str(nombre_actual).upper(), border=0, ln=True)
       
-      pdf.set_font("Arial", "B", 11)
-      pdf.cell(30, 8, txt="Direccion:", border=0)
-      pdf.set_font("Arial", "", 11)
-      pdf.multi_cell(160, 8, txt=f"{datos_usuario['Calle']} MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}".upper(), border=0)
+      pdf.set_font("Arial", "B", 11); pdf.cell(30, 8, txt="Direccion:", border=0)
+      pdf.set_font("Arial", "", 11); pdf.multi_cell(160, 8, txt=f"{datos_usuario['Calle']} MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}".upper(), border=0)
       pdf.ln(5)
       
-      pdf.set_fill_color(240, 240, 240) 
-      pdf.set_draw_color(150, 150, 150) 
-      pdf.set_font("Arial", "B", 11)
+      pdf.set_fill_color(240, 240, 240); pdf.set_draw_color(150, 150, 150); pdf.set_font("Arial", "B", 11)
       pdf.cell(140, 8, txt=" Descripcion del Consumo", border=1, fill=True)
       pdf.cell(50, 8, txt=" Importe", border=1, fill=True, align='R', ln=True)
       
       pdf.set_font("Arial", "", 11)
-      pdf.cell(140, 8, txt=f" Lectura Anterior: {lectura_anterior} kWh", border='LR')
-      pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+      pdf.cell(140, 8, txt=f" Lectura Anterior: {lectura_anterior} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+      pdf.cell(140, 8, txt=f" Lectura Actual: {lectura_actual} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+      pdf.cell(140, 8, txt=f" Consumo Neto: {consumo_neto:.1f} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+      pdf.cell(140, 8, txt=f" Cargo por Energia (S/. {tarifa_kwh:.2f})", border='LR'); pdf.cell(50, 8, txt=f"S/. {costo_consumo:.2f} ", border='LR', align='R', ln=True)
+      pdf.cell(140, 8, txt=f" Cargo Fijo", border='LR'); pdf.cell(50, 8, txt=f"S/. {cargo_fijo:.2f} ", border='LR', align='R', ln=True)
+      pdf.cell(140, 2, txt="", border='LRB'); pdf.cell(50, 2, txt="", border='LRB', ln=True); pdf.ln(8)
       
-      pdf.cell(140, 8, txt=f" Lectura Actual: {lectura_actual} kWh", border='LR')
-      pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
-      
-      pdf.cell(140, 8, txt=f" Consumo Neto: {consumo_neto:.1f} kWh", border='LR')
-      pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
-      
-      pdf.cell(140, 8, txt=f" Cargo por Energia (S/. {tarifa_kwh:.2f} x kWh)", border='LR')
-      pdf.cell(50, 8, txt=f"S/. {costo_consumo:.2f} ", border='LR', align='R', ln=True)
-      
-      pdf.cell(140, 8, txt=f" Cargo Fijo", border='LR')
-      pdf.cell(50, 8, txt=f"S/. {cargo_fijo:.2f} ", border='LR', align='R', ln=True)
-      
-      pdf.cell(140, 2, txt="", border='LRB')
-      pdf.cell(50, 2, txt="", border='LRB', ln=True)
-      pdf.ln(8)
-      
-      pdf.set_fill_color(230, 240, 255) 
-      pdf.set_draw_color(0, 51, 102) 
-      pdf.set_line_width(0.6) 
-      
-      pdf.set_font("Arial", "B", 14)
-      pdf.cell(90, 14, txt="", border=0) 
-      pdf.set_text_color(0, 51, 102) 
-      pdf.cell(50, 14, txt="TOTAL A PAGAR:", border='LTB', align='R', fill=True)
-      
-      pdf.set_font("Arial", "B", 16)
-      pdf.set_text_color(204, 0, 0) 
+      pdf.set_fill_color(230, 240, 255); pdf.set_draw_color(0, 51, 102); pdf.set_line_width(0.6) 
+      pdf.set_font("Arial", "B", 14); pdf.cell(90, 14, txt="", border=0) 
+      pdf.set_text_color(0, 51, 102); pdf.cell(50, 14, txt="TOTAL A PAGAR:", border='LTB', align='R', fill=True)
+      pdf.set_font("Arial", "B", 16); pdf.set_text_color(204, 0, 0) 
       pdf.cell(50, 14, txt=f"S/. {total_a_pagar:.2f}", border='RTB', align='C', fill=True, ln=True)
       
-      pdf.set_line_width(0.2)
-      pdf.set_text_color(120, 120, 120)
-      pdf.ln(12)
-      pdf.set_font("Arial", "I", 9)
-      pdf.cell(190, 10, txt="Conserve este recibo para cualquier reclamo. ¡Gracias por su puntualidad!", ln=True, align='C')
+      pdf.set_line_width(0.2); pdf.set_text_color(120, 120, 120); pdf.ln(12)
+      pdf.set_font("Arial", "I", 9); pdf.cell(190, 10, txt="Conserve este recibo para cualquier reclamo. ¡Gracias por su puntualidad!", ln=True, align='C')
       
-      pdf_bytes = pdf.output(dest='S').encode('latin-1', 'replace')
-
-      st.download_button(
-          label="📥 Descargar Recibo (PDF Oficial)",
-          data=pdf_bytes,
-          file_name=f"Recibo_{datos_usuario['Nombre'].replace(' ', '_')}.pdf",
-          mime="application/pdf"
-      )
+      st.download_button(label="📥 Descargar Recibo (PDF Oficial)", data=pdf.output(dest='S').encode('latin-1', 'replace'), file_name=f"Recibo_{str(nombre_actual).replace(' ', '_')}.pdf", mime="application/pdf")
