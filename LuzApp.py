@@ -15,6 +15,14 @@ st.set_page_config(page_title="Ramozi LuzApp - Asociación 4 de Enero", page_ico
 
 API_KEY = "AQ.Ab8RN6KRORBTPy37ez_9L8oDEntYDiwJBT09u4DwmUfVtlwQUQ"
 
+# --- VARIABLES DE TIEMPO AUTOMÁTICAS ---
+MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+now = datetime.now()
+mes_actual_nombre = MESES_ES[now.month - 1]
+año_actual = now.year
+# Truco: Si es enero (1), restamos 2 y da -1 (Diciembre en Python)
+mes_anterior_nombre = MESES_ES[now.month - 2]
+
 def obtener_lectura_medidor(imagen):
     if not API_KEY or API_KEY == "":
         st.error("❌ La API Key no está configurada.")
@@ -148,25 +156,16 @@ with st.sidebar:
         use_container_width=True
     )
     
-    # LÓGICA DE HISTORIAL AUTOMÁTICO
     df_proximo = st.session_state.df_usuarios.copy()
     mask = df_proximo['Nombre'].isin(st.session_state.procesados_hoy)
     
-    # 1. Creamos el nombre de la columna histórica (Ej: Historial_Agosto_2026)
-    MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-    mes_actual = MESES_ES[datetime.now().month - 1]
-    año_actual = datetime.now().year
-    col_historial = f"Historial_{mes_actual}_{año_actual}"
+    col_historial = f"Historial_{mes_actual_nombre}_{año_actual}"
     
-    # 2. Guardamos la lectura actual en esa columna histórica permanentemente
     df_proximo.loc[mask, col_historial] = df_proximo.loc[mask, 'Lectura_Nueva']
-    
-    # 3. Preparamos la columna operativa para el próximo mes
     df_proximo.loc[mask, 'Lectura_Anterior'] = df_proximo.loc[mask, 'Lectura_Nueva']
     
     output_db = io.BytesIO()
     with pd.ExcelWriter(output_db, engine='openpyxl') as writer:
-        # Limpiamos solo las columnas temporales del mes, manteniendo el historial intacto
         cols_base = [c for c in df_proximo.columns if c not in ["Lectura_Nueva", "Consumo_Neto", "Total_Pagar", "Etiqueta"]]
         df_proximo[cols_base].to_excel(writer, index=False, sheet_name='Usuarios')
         
@@ -228,7 +227,8 @@ except:
 if nombre_actual in st.session_state.procesados_hoy:
     st.success("✅ **¡Este medidor ya fue leído y facturado en esta sesión!**")
 
-st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Lectura Registrada Anterior:** `{lectura_anterior} kWh`")
+# Modificación aquí para agregar el mes a la interfaz
+st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Lectura Registrada Anterior ({mes_anterior_nombre}):** `{lectura_anterior} kWh`")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -236,7 +236,6 @@ with col1:
 with col2:
   cargo_fijo = st.number_input("Cargo Fijo (S/.)", value=2.00, step=0.50)
 
-# BOTÓN DE DESHACER 
 if nombre_actual in st.session_state.procesados_hoy:
     st.warning("Detectamos que actualizaste este medidor recientemente. ¿Hubo un error?")
     if st.button("↩️ Deshacer y Borrar Lectura Actual", type="secondary"):
@@ -268,7 +267,8 @@ elif opcion_ingreso == "Subir Foto":
     imagen_medidor = Image.open(imagen_subida)
     st.image(imagen_medidor, use_column_width=True)
 else:
-  lectura_manual_ingresada = st.number_input("Lectura Actual del Medidor (kWh):", min_value=0.0, value=float(lectura_anterior), step=0.1, format="%.1f")
+  # Modificación aquí para el ingreso manual
+  lectura_manual_ingresada = st.number_input(f"Lectura Actual del Medidor - {mes_actual_nombre} (kWh):", min_value=0.0, value=float(lectura_anterior), step=0.1, format="%.1f")
 
 if opcion_ingreso in ["Usar Cámara", "Subir Foto"] and imagen_medidor is not None:
   if st.button("🚀 Extraer y Calcular", type="primary"):
@@ -303,14 +303,14 @@ if procesar_cobro and lectura_actual is not None:
       st.write(f"- **Consumo Neto:** `{consumo_neto:.1f} kWh`")
       st.markdown(f"## **Total a Cobrar: S/. {total_a_pagar:.2f}**")
 
-      # A. WHATSAPP
+      # A. WHATSAPP (Añadiendo los meses)
       telefono_usuario = str(datos_usuario["Telefono"]).strip()
       if telefono_usuario and telefono_usuario != "nan":
-        mensaje_ws = f"⚡ *ASOCIACIÓN 4 DE ENERO* - Recibo de Luz\nHola *{nombre_actual}*, te enviamos el detalle de tu consumo:\n📍 *Ubicación:* {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}\n- Lectura anterior: {lectura_anterior} kWh\n- Lectura actual: {lectura_actual} kWh\n- Consumo neto: {consumo_neto:.1f} kWh\n\n💰 *TOTAL A PAGAR: S/. {total_a_pagar:.2f}*\n\nPuedes realizar el pago mediante transferencia, Yape o Plin. ¡Gracias!"
+        mensaje_ws = f"⚡ *ASOCIACIÓN 4 DE ENERO* - Recibo de Luz\nHola *{nombre_actual}*, te enviamos el detalle de tu consumo:\n📍 *Ubicación:* {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}\n- Lectura anterior ({mes_anterior_nombre}): {lectura_anterior} kWh\n- Lectura actual ({mes_actual_nombre}): {lectura_actual} kWh\n- Consumo neto: {consumo_neto:.1f} kWh\n\n💰 *TOTAL A PAGAR: S/. {total_a_pagar:.2f}*\n\nPuedes realizar el pago mediante transferencia, Yape o Plin. ¡Gracias!"
         enlace_whatsapp = f"https://wa.me/{telefono_usuario}?text={urllib.parse.quote(mensaje_ws)}"
         st.markdown(f'<a href="{enlace_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:12px; border-radius:8px; width: 100%; cursor: pointer; border: none; font-weight: bold; margin-bottom: 10px;">📲 Enviar Cobro por WhatsApp</button></a>', unsafe_allow_html=True)
 
-      # B. PDF 
+      # B. PDF (Añadiendo los meses en la tabla)
       pdf = FPDF()
       pdf.add_page()
       pdf.set_font("Arial", "B", 18); pdf.set_text_color(0, 51, 102) 
@@ -332,8 +332,8 @@ if procesar_cobro and lectura_actual is not None:
       pdf.cell(50, 8, txt=" Importe", border=1, fill=True, align='R', ln=True)
       
       pdf.set_font("Arial", "", 11)
-      pdf.cell(140, 8, txt=f" Lectura Anterior: {lectura_anterior} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
-      pdf.cell(140, 8, txt=f" Lectura Actual: {lectura_actual} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+      pdf.cell(140, 8, txt=f" Lectura Anterior ({mes_anterior_nombre}): {lectura_anterior} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+      pdf.cell(140, 8, txt=f" Lectura Actual ({mes_actual_nombre}): {lectura_actual} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
       pdf.cell(140, 8, txt=f" Consumo Neto: {consumo_neto:.1f} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
       pdf.cell(140, 8, txt=f" Cargo por Energia (S/. {tarifa_kwh:.2f})", border='LR'); pdf.cell(50, 8, txt=f"S/. {costo_consumo:.2f} ", border='LR', align='R', ln=True)
       pdf.cell(140, 8, txt=f" Cargo Fijo", border='LR'); pdf.cell(50, 8, txt=f"S/. {cargo_fijo:.2f} ", border='LR', align='R', ln=True)
