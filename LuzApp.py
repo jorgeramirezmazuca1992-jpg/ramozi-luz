@@ -8,6 +8,7 @@ from PIL import Image
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
+from datetime import datetime
 
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="Ramozi LuzApp - Asociación 4 de Enero", page_icon="⚡", layout="wide")
@@ -113,7 +114,6 @@ def cargar_datos_iniciales():
         else:
             df["Telefono"] = ""
             
-        # NUEVO: Forzar la creación de columnas de registro histórico si no existen
         if "Lectura_Nueva" not in df.columns: df["Lectura_Nueva"] = 0.0
         if "Consumo_Neto" not in df.columns: df["Consumo_Neto"] = 0.0
         if "Total_Pagar" not in df.columns: df["Total_Pagar"] = 0.0
@@ -130,17 +130,15 @@ if "procesados_hoy" not in st.session_state:
 if "recaudacion" not in st.session_state:
     st.session_state.recaudacion = {} 
 
-# --- BARRA LATERAL (DASHBOARD Y DOBLE DESCARGA) ---
+# --- BARRA LATERAL (DASHBOARD Y DOBLE DESCARGA HISTÓRICA) ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/6009/6009864.png", width=100)
     st.markdown("### 💾 Guardar Trabajo")
-    st.warning("⚠️ Recuerda descargar tus archivos al finalizar el recorrido.")
+    st.warning("⚠️ Recuerda descargar tus archivos al finalizar el día.")
     
-    # DESCARGA 1: REPORTE COMPLETO CON HISTORIAL MANTENIDO
     output_reporte = io.BytesIO()
     with pd.ExcelWriter(output_reporte, engine='openpyxl') as writer:
-        cols_limpias_reporte = [c for c in st.session_state.df_usuarios.columns if c != "Etiqueta"]
-        st.session_state.df_usuarios[cols_limpias_reporte].to_excel(writer, index=False, sheet_name='Reporte_Auditoria')
+        st.session_state.df_usuarios.to_excel(writer, index=False, sheet_name='Reporte_Auditoria')
     
     st.download_button(
         label="📊 1. Descargar Reporte del Mes",
@@ -150,15 +148,25 @@ with st.sidebar:
         use_container_width=True
     )
     
-    # DESCARGA 2: ARCHIVO PREPARADO LIMPIO PARA EL PRÓXIMO MES
+    # LÓGICA DE HISTORIAL AUTOMÁTICO
     df_proximo = st.session_state.df_usuarios.copy()
     mask = df_proximo['Nombre'].isin(st.session_state.procesados_hoy)
-    # Reemplaza la Lectura Anterior con la Nueva lectura únicamente en los procesados
+    
+    # 1. Creamos el nombre de la columna histórica (Ej: Historial_Agosto_2026)
+    MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+    mes_actual = MESES_ES[datetime.now().month - 1]
+    año_actual = datetime.now().year
+    col_historial = f"Historial_{mes_actual}_{año_actual}"
+    
+    # 2. Guardamos la lectura actual en esa columna histórica permanentemente
+    df_proximo.loc[mask, col_historial] = df_proximo.loc[mask, 'Lectura_Nueva']
+    
+    # 3. Preparamos la columna operativa para el próximo mes
     df_proximo.loc[mask, 'Lectura_Anterior'] = df_proximo.loc[mask, 'Lectura_Nueva']
     
     output_db = io.BytesIO()
     with pd.ExcelWriter(output_db, engine='openpyxl') as writer:
-        # Filtramos para guardar solo la estructura inicial y limpia de cara al próximo mes
+        # Limpiamos solo las columnas temporales del mes, manteniendo el historial intacto
         cols_base = [c for c in df_proximo.columns if c not in ["Lectura_Nueva", "Consumo_Neto", "Total_Pagar", "Etiqueta"]]
         df_proximo[cols_base].to_excel(writer, index=False, sheet_name='Usuarios')
         
@@ -228,7 +236,7 @@ with col1:
 with col2:
   cargo_fijo = st.number_input("Cargo Fijo (S/.)", value=2.00, step=0.50)
 
-# BOTÓN DE DESHACER (Resetea las columnas nuevas de manera segura)
+# BOTÓN DE DESHACER 
 if nombre_actual in st.session_state.procesados_hoy:
     st.warning("Detectamos que actualizaste este medidor recientemente. ¿Hubo un error?")
     if st.button("↩️ Deshacer y Borrar Lectura Actual", type="secondary"):
@@ -281,7 +289,6 @@ if procesar_cobro and lectura_actual is not None:
       costo_consumo = consumo_neto * tarifa_kwh
       total_a_pagar = costo_consumo + cargo_fijo
 
-      # ASIGNACIÓN: Guardar datos en las columnas nuevas sin alterar Lectura_Anterior
       st.session_state.df_usuarios.at[idx_usuario, 'Lectura_Nueva'] = lectura_actual
       st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = consumo_neto
       st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = total_a_pagar
