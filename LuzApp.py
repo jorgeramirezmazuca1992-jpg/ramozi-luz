@@ -113,7 +113,7 @@ def cargar_datos_iniciales():
         else:
             df["Telefono"] = ""
             
-        # NUEVO: Crear columnas de historial vacías si no existen
+        # NUEVO: Forzar la creación de columnas de registro histórico si no existen
         if "Lectura_Nueva" not in df.columns: df["Lectura_Nueva"] = 0.0
         if "Consumo_Neto" not in df.columns: df["Consumo_Neto"] = 0.0
         if "Total_Pagar" not in df.columns: df["Total_Pagar"] = 0.0
@@ -134,12 +134,13 @@ if "recaudacion" not in st.session_state:
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/6009/6009864.png", width=100)
     st.markdown("### 💾 Guardar Trabajo")
-    st.warning("⚠️ Recuerda descargar tus archivos al finalizar el día.")
+    st.warning("⚠️ Recuerda descargar tus archivos al finalizar el recorrido.")
     
-    # DESCARGA 1: REPORTE HISTÓRICO COMPLETO
+    # DESCARGA 1: REPORTE COMPLETO CON HISTORIAL MANTENIDO
     output_reporte = io.BytesIO()
     with pd.ExcelWriter(output_reporte, engine='openpyxl') as writer:
-        st.session_state.df_usuarios.to_excel(writer, index=False, sheet_name='Reporte_Auditoria')
+        cols_limpias_reporte = [c for c in st.session_state.df_usuarios.columns if c != "Etiqueta"]
+        st.session_state.df_usuarios[cols_limpias_reporte].to_excel(writer, index=False, sheet_name='Reporte_Auditoria')
     
     st.download_button(
         label="📊 1. Descargar Reporte del Mes",
@@ -149,22 +150,22 @@ with st.sidebar:
         use_container_width=True
     )
     
-    # DESCARGA 2: ARCHIVO PREPARADO PARA EL PRÓXIMO MES
+    # DESCARGA 2: ARCHIVO PREPARADO LIMPIO PARA EL PRÓXIMO MES
     df_proximo = st.session_state.df_usuarios.copy()
-    # Mueve la Lectura_Nueva a Lectura_Anterior SOLO a los usuarios que cobramos
     mask = df_proximo['Nombre'].isin(st.session_state.procesados_hoy)
+    # Reemplaza la Lectura Anterior con la Nueva lectura únicamente en los procesados
     df_proximo.loc[mask, 'Lectura_Anterior'] = df_proximo.loc[mask, 'Lectura_Nueva']
     
     output_db = io.BytesIO()
     with pd.ExcelWriter(output_db, engine='openpyxl') as writer:
-        # Filtramos para guardar solo las columnas base y dejar el archivo limpio
+        # Filtramos para guardar solo la estructura inicial y limpia de cara al próximo mes
         cols_base = [c for c in df_proximo.columns if c not in ["Lectura_Nueva", "Consumo_Neto", "Total_Pagar", "Etiqueta"]]
         df_proximo[cols_base].to_excel(writer, index=False, sheet_name='Usuarios')
         
     st.download_button(
         label="💾 2. Descargar BD (Próximo Mes)",
         data=output_db.getvalue(),
-        file_name="usuarios.xlsx", # Mismo nombre para reemplazar fácil en GitHub
+        file_name="usuarios.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
@@ -227,11 +228,10 @@ with col1:
 with col2:
   cargo_fijo = st.number_input("Cargo Fijo (S/.)", value=2.00, step=0.50)
 
-# BOTÓN DE DESHACER (Actualizado para borrar el historial reciente)
+# BOTÓN DE DESHACER (Resetea las columnas nuevas de manera segura)
 if nombre_actual in st.session_state.procesados_hoy:
     st.warning("Detectamos que actualizaste este medidor recientemente. ¿Hubo un error?")
     if st.button("↩️ Deshacer y Borrar Lectura Actual", type="secondary"):
-        # Reseteamos los valores nuevos
         st.session_state.df_usuarios.at[idx_usuario, 'Lectura_Nueva'] = 0.0
         st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = 0.0
         st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = 0.0
@@ -281,7 +281,7 @@ if procesar_cobro and lectura_actual is not None:
       costo_consumo = consumo_neto * tarifa_kwh
       total_a_pagar = costo_consumo + cargo_fijo
 
-      # NUEVO: Guardar en el historial SIN tocar la Lectura Anterior
+      # ASIGNACIÓN: Guardar datos en las columnas nuevas sin alterar Lectura_Anterior
       st.session_state.df_usuarios.at[idx_usuario, 'Lectura_Nueva'] = lectura_actual
       st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = consumo_neto
       st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = total_a_pagar
