@@ -147,7 +147,7 @@ col_historial_previo = f"Lectura_{mes_previo}"
 if col_historial_actual not in st.session_state.df_usuarios.columns:
     st.session_state.df_usuarios[col_historial_actual] = 0.0
 
-# --- BARRA LATERAL (DESCARGAS) ---
+# --- BARRA LATERAL (DESCARGAS Y ADMINISTRACIÓN) ---
 with st.sidebar:
     st.markdown("---")
     st.markdown("### 💾 Guardar Trabajo")
@@ -191,6 +191,17 @@ with st.sidebar:
     st.progress(leidos / total_usuarios if total_usuarios > 0 else 0)
     st.caption(f"📊 Medidores leídos: **{leidos} de {total_usuarios}**")
 
+    # NUEVO: MODO ADMINISTRADOR PARA PURGAR HISTORIAL
+    with st.expander("🛠️ Administración Avanzada (Peligro)"):
+        st.warning("Usa esta opción solo si necesitas formatear la base de datos para borrar el historial acumulado.")
+        if st.button("⚠️ Purgar Historial Antiguo"):
+            cols_a_mantener = ["Calle", "MZ", "Lote", "Nombre", "Lectura_Anterior", "Telefono", "Etiqueta"]
+            cols_finales = [c for c in st.session_state.df_usuarios.columns if c in cols_a_mantener]
+            st.session_state.df_usuarios = st.session_state.df_usuarios[cols_finales]
+            st.session_state.procesados_hoy = []
+            st.session_state.recaudacion = {}
+            st.success("✅ Historial formateado. Descarga la BD y súbela a GitHub para guardar los cambios de forma permanente.")
+            st.rerun()
 
 # --- 3. INTERFAZ PRINCIPAL ---
 st.markdown("<h1 style='text-align: center; color: #1f77b4;'>⚡ Ramozi LuzApp</h1>", unsafe_allow_html=True)
@@ -223,11 +234,9 @@ idx_usuario = st.session_state.df_usuarios[st.session_state.df_usuarios["Etiquet
 datos_usuario = st.session_state.df_usuarios.loc[idx_usuario]
 nombre_actual = datos_usuario['Nombre']
 
-# BÚSQUEDA JERÁRQUICA E INTELIGENTE DE LA LECTURA ANTERIOR
 lectura_anterior = 0.0
 mes_origen_lectura = mes_previo
 
-# 1. Intentar buscar en la columna del mes previo (ej. Lectura_Julio)
 if col_historial_previo in datos_usuario and pd.notna(datos_usuario[col_historial_previo]):
     try:
         val = float(str(datos_usuario[col_historial_previo]).replace(",", ".").strip())
@@ -235,7 +244,6 @@ if col_historial_previo in datos_usuario and pd.notna(datos_usuario[col_historia
             lectura_anterior = val
     except: pass
 
-# 2. Si no se encontró, buscar en orden inverso a través de los meses anteriores
 if lectura_anterior == 0.0:
     for m_idx in range(idx_facturacion - 1, -1, -1):
         col_m = f"Lectura_{MESES_LISTA[m_idx]}"
@@ -248,15 +256,14 @@ if lectura_anterior == 0.0:
                     break
             except: pass
 
-# 3. Si aún no encuentra, recurrir a las columnas base (Lectura_Anterior / Lectura_Julio / etc)
 if lectura_anterior == 0.0:
-    for col_posible in ["Lectura_Julio", "Lectura_Junio", "Lectura_Anterior", "Lectura Anterior", "lectura_anterior"]:
+    for col_posible in ["Lectura_Anterior", "Lectura Anterior", "lectura_anterior"]:
         if col_posible in datos_usuario and pd.notna(datos_usuario[col_posible]):
             try:
                 val = float(str(datos_usuario[col_posible]).replace(",", ".").strip())
                 if val >= 0:
                     lectura_anterior = val
-                    mes_origen_lectura = col_posible.replace("Lectura_", "").replace("_", " ")
+                    mes_origen_lectura = "Abril" # Default visualizado como base original
                     break
             except: pass
 
@@ -265,8 +272,7 @@ if nombre_actual in st.session_state.procesados_hoy:
 
 st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Lectura Base ({mes_origen_lectura}):** `{lectura_anterior} kWh`")
 
-# SECCIÓN DE HISTORIAL COMPLETO
-cols_historia = [c for c in st.session_state.df_usuarios.columns if c.startswith("Lectura_") or c in ["Lectura_Anterior", "Lectura Anterior"]]
+cols_historia = [c for c in st.session_state.df_usuarios.columns if c.startswith("Lectura_") and c not in ["Lectura_Anterior", "Lectura_Nueva"]]
 historial_existente = {}
 for col_h in cols_historia:
     if col_h in datos_usuario and pd.notna(datos_usuario[col_h]):
