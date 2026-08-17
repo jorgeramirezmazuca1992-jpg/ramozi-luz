@@ -135,17 +135,15 @@ if "recaudacion" not in st.session_state:
 st.sidebar.image("https://cdn-icons-png.flaticon.com/512/6009/6009864.png", width=90)
 st.sidebar.markdown("### 📅 Mes de Facturación")
 
-mes_defecto_idx = (datetime.now().month - 2) % 12  # Por defecto propone el mes anterior
+mes_defecto_idx = (datetime.now().month - 2) % 12  
 mes_facturacion = st.sidebar.selectbox("Selecciona el mes a procesar:", MESES_LISTA, index=mes_defecto_idx)
 
-# Cálculo automático del mes previo
 idx_facturacion = MESES_LISTA.index(mes_facturacion)
 mes_previo = MESES_LISTA[(idx_facturacion - 1) % 12]
 
 col_historial_actual = f"Lectura_{mes_facturacion}"
 col_historial_previo = f"Lectura_{mes_previo}"
 
-# Asegurar que existan las columnas en el dataframe
 if col_historial_actual not in st.session_state.df_usuarios.columns:
     st.session_state.df_usuarios[col_historial_actual] = 0.0
 
@@ -154,7 +152,6 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 💾 Guardar Trabajo")
     
-    # 1. REPORTE COMPLETO CON HISTORIAL
     output_reporte = io.BytesIO()
     with pd.ExcelWriter(output_reporte, engine='openpyxl') as writer:
         st.session_state.df_usuarios.to_excel(writer, index=False, sheet_name='Reporte_Auditoria')
@@ -167,7 +164,6 @@ with st.sidebar:
         use_container_width=True
     )
     
-    # 2. BASE DE DATOS LIMPIA PARA EL PRÓXIMO MES
     df_proximo = st.session_state.df_usuarios.copy()
     mask = df_proximo['Nombre'].isin(st.session_state.procesados_hoy)
     df_proximo.loc[mask, 'Lectura_Anterior'] = df_proximo.loc[mask, col_historial_actual]
@@ -227,19 +223,48 @@ idx_usuario = st.session_state.df_usuarios[st.session_state.df_usuarios["Etiquet
 datos_usuario = st.session_state.df_usuarios.loc[idx_usuario]
 nombre_actual = datos_usuario['Nombre']
 
-# Determinar lectura anterior priorizando el historial si existe
-if col_historial_previo in datos_usuario and pd.notna(datos_usuario[col_historial_previo]) and float(datos_usuario[col_historial_previo]) > 0:
-    lectura_anterior = float(datos_usuario[col_historial_previo])
-else:
+# BÚSQUEDA ROBUSTA Y FLEXIBLE DE LA LECTURA ANTERIOR
+lectura_anterior = 0.0
+
+if col_historial_previo in datos_usuario and pd.notna(datos_usuario[col_historial_previo]):
     try:
-        lectura_anterior = float(datos_usuario["Lectura_Anterior"]) if pd.notna(datos_usuario["Lectura_Anterior"]) else 0.0
-    except:
-        lectura_anterior = 0.0
+        val = float(str(datos_usuario[col_historial_previo]).replace(",", ".").strip())
+        if val > 0: lectura_anterior = val
+    except: pass
+
+if lectura_anterior == 0.0:
+    for col_posible in ["Lectura_Anterior", "Lectura Anterior", "lectura_anterior"]:
+        if col_posible in datos_usuario and pd.notna(datos_usuario[col_posible]):
+            try:
+                val = float(str(datos_usuario[col_posible]).replace(",", ".").strip())
+                if val >= 0:
+                    lectura_anterior = val
+                    break
+            except: pass
 
 if nombre_actual in st.session_state.procesados_hoy:
     st.success(f"✅ **¡Este medidor ya fue registrado para {mes_facturacion}!**")
 
 st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Lectura Base ({mes_previo}):** `{lectura_anterior} kWh`")
+
+# SECCIÓN DE MUESTRA DE HISTORIAL COMPLETO
+cols_historia = [c for c in st.session_state.df_usuarios.columns if c.startswith("Lectura_") or c in ["Lectura_Anterior", "Lectura Anterior"]]
+historial_existente = {}
+for col_h in cols_historia:
+    if col_h in datos_usuario and pd.notna(datos_usuario[col_h]):
+        try:
+            v_val = float(str(datos_usuario[col_h]).replace(",", ".").strip())
+            if v_val > 0:
+                etiqueta_h = col_h.replace("Lectura_", "").replace("_", " ")
+                historial_existente[etiqueta_h] = f"{v_val} kWh"
+        except: pass
+
+if historial_existente:
+    st.markdown("#### 📜 Historial de Lecturas Registradas:")
+    cols_metrics = st.columns(min(len(historial_existente), 4))
+    for idx_h, (lbl_h, val_h) in enumerate(historial_existente.items()):
+        with cols_metrics[idx_h % 4]:
+            st.metric(label=lbl_h, value=val_h)
 
 col1, col2 = st.columns(2)
 with col1:
@@ -299,7 +324,6 @@ if procesar_cobro and lectura_actual is not None:
       costo_consumo = consumo_neto * tarifa_kwh
       total_a_pagar = costo_consumo + cargo_fijo
 
-      # Guardar en la columna dinámica del mes
       st.session_state.df_usuarios.at[idx_usuario, col_historial_actual] = lectura_actual
       st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = consumo_neto
       st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = total_a_pagar
