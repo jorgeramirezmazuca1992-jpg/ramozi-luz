@@ -219,7 +219,6 @@ st.markdown("---")
 
 st.subheader("1. Selección de Usuario")
 
-# FORMATO LIMPIO DE LECTURA EN LA LISTA DESPLEGABLE
 lecturas_formateadas = pd.to_numeric(st.session_state.df_usuarios["Lectura_Anterior"], errors='coerce').fillna(0.0).apply(lambda x: f"{x:.1f}")
 
 st.session_state.df_usuarios["Etiqueta"] = (
@@ -247,7 +246,7 @@ idx_usuario = st.session_state.df_usuarios[st.session_state.df_usuarios["Etiquet
 datos_usuario = st.session_state.df_usuarios.loc[idx_usuario]
 nombre_actual = datos_usuario['Nombre']
 
-# BÚSQUEDA JERÁRQUICA E INTELIGENTE DE LA LECTURA ANTERIOR
+# BÚSQUEDA INTELIGENTE DE LECTURA ANTERIOR
 lectura_anterior = 0.0
 mes_origen_lectura = mes_previo
 
@@ -286,7 +285,6 @@ if nombre_actual in st.session_state.procesados_hoy:
 
 st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Lectura Base ({mes_origen_lectura}):** `{lectura_anterior:.1f} kWh`")
 
-# MOSTRAR PANEL HISTÓRICO CON BASE INICIAL Y MESES
 historial_existente = {}
 
 if "Lectura_Anterior" in datos_usuario and pd.notna(datos_usuario["Lectura_Anterior"]):
@@ -325,7 +323,6 @@ if nombre_actual in st.session_state.procesados_hoy:
         st.session_state.df_usuarios.at[idx_usuario, col_historial_actual] = 0.0
         st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = 0.0
         st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = 0.0
-        
         st.session_state.procesados_hoy.remove(nombre_actual)
         if nombre_actual in st.session_state.recaudacion:
             del st.session_state.recaudacion[nombre_actual] 
@@ -362,72 +359,75 @@ elif opcion_ingreso == "Ingreso Manual (Sin IA)":
       lectura_actual = lectura_manual_ingresada
       procesar_cobro = True
 
-# --- 5. MOTOR FINANCIERO Y RENDERING ---
+# --- 5. MOTOR FINANCIERO CORREGIDO ---
 if procesar_cobro and lectura_actual is not None:
+    # CORRECCIÓN DE CÁLCULO NEGATIVO (MEDIDORES REINICIADOS O NUEVOS)
     if lectura_actual < lectura_anterior:
-      st.error(f"🛑 **ERROR:** La lectura nueva de {mes_facturacion} ({lectura_actual:.1f}) es menor a la de {mes_origen_lectura} ({lectura_anterior:.1f}).")
+      st.warning(f"🔄 **Aviso de cambio de medidor:** La lectura actual ({lectura_actual:.1f}) es menor a la anterior ({lectura_anterior:.1f}). Se calculará tomando el valor actual como el consumo inicial neto de este periodo.")
+      consumo_neto = lectura_actual 
     else:
       consumo_neto = lectura_actual - lectura_anterior
-      costo_consumo = consumo_neto * tarifa_kwh
-      total_a_pagar = costo_consumo + cargo_fijo
 
-      st.session_state.df_usuarios.at[idx_usuario, col_historial_actual] = lectura_actual
-      st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = consumo_neto
-      st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = total_a_pagar
-      
-      if nombre_actual not in st.session_state.procesados_hoy:
-          st.session_state.procesados_hoy.append(nombre_actual)
-      
-      st.session_state.recaudacion[nombre_actual] = total_a_pagar
+    costo_consumo = consumo_neto * tarifa_kwh
+    total_a_pagar = costo_consumo + cargo_fijo
 
-      st.success(f"✅ **Lectura de {mes_facturacion} guardada temporalmente.**")
-      st.markdown("### 📊 Liquidación Oficial")
-      st.write(f"- **Consumo Neto:** `{consumo_neto:.1f} kWh`")
-      st.markdown(f"## **Total a Cobrar: S/. {total_a_pagar:.2f}**")
+    st.session_state.df_usuarios.at[idx_usuario, col_historial_actual] = lectura_actual
+    st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = consumo_neto
+    st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = total_a_pagar
+    
+    if nombre_actual not in st.session_state.procesados_hoy:
+        st.session_state.procesados_hoy.append(nombre_actual)
+    
+    st.session_state.recaudacion[nombre_actual] = total_a_pagar
 
-      # A. WHATSAPP
-      telefono_usuario = str(datos_usuario["Telefono"]).strip()
-      if telefono_usuario and telefono_usuario != "nan":
-        mensaje_ws = f"⚡ *ASOCIACIÓN 4 DE ENERO* - Recibo de Luz\nHola *{nombre_actual}*, te enviamos el detalle de tu consumo:\n📍 *Ubicación:* {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}\n- Lectura anterior ({mes_origen_lectura}): {lectura_anterior:.1f} kWh\n- Lectura actual ({mes_facturacion}): {lectura_actual:.1f} kWh\n- Consumo neto: {consumo_neto:.1f} kWh\n\n💰 *TOTAL A PAGAR: S/. {total_a_pagar:.2f}*\n\nPuedes realizar el pago mediante transferencia, Yape o Plin. ¡Gracias!"
-        enlace_whatsapp = f"https://wa.me/{telefono_usuario}?text={urllib.parse.quote(mensaje_ws)}"
-        st.markdown(f'<a href="{enlace_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:12px; border-radius:8px; width: 100%; cursor: pointer; border: none; font-weight: bold; margin-bottom: 10px;">📲 Enviar Cobro por WhatsApp</button></a>', unsafe_allow_html=True)
+    st.success(f"✅ **Lectura de {mes_facturacion} guardada temporalmente.**")
+    st.markdown("### 📊 Liquidación Oficial")
+    st.write(f"- **Consumo Neto:** `{consumo_neto:.1f} kWh`")
+    st.markdown(f"## **Total a Cobrar: S/. {total_a_pagar:.2f}**")
 
-      # B. PDF 
-      pdf = FPDF()
-      pdf.add_page()
-      pdf.set_font("Arial", "B", 18); pdf.set_text_color(0, 51, 102) 
-      pdf.cell(190, 10, txt="ASOCIACION 4 DE ENERO", ln=True, align='C')
-      pdf.set_font("Arial", "", 10); pdf.set_text_color(100, 100, 100) 
-      pdf.cell(190, 5, txt=f"Sector 7 - Iquitos | Recibo {mes_facturacion}", ln=True, align='C')
-      pdf.ln(5); pdf.set_draw_color(200, 200, 200); pdf.line(10, 30, 200, 30); pdf.ln(5)
-      
-      pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", "B", 11)
-      pdf.cell(30, 8, txt="Titular:", border=0)
-      pdf.set_font("Arial", "", 11); pdf.cell(160, 8, txt=str(nombre_actual).upper(), border=0, ln=True)
-      
-      pdf.set_font("Arial", "B", 11); pdf.cell(30, 8, txt="Direccion:", border=0)
-      pdf.set_font("Arial", "", 11); pdf.multi_cell(160, 8, txt=f"{datos_usuario['Calle']} MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}".upper(), border=0)
-      pdf.ln(5)
-      
-      pdf.set_fill_color(240, 240, 240); pdf.set_draw_color(150, 150, 150); pdf.set_font("Arial", "B", 11)
-      pdf.cell(140, 8, txt=" Descripcion del Consumo", border=1, fill=True)
-      pdf.cell(50, 8, txt=" Importe", border=1, fill=True, align='R', ln=True)
-      
-      pdf.set_font("Arial", "", 11)
-      pdf.cell(140, 8, txt=f" Lectura Anterior ({mes_origen_lectura}): {lectura_anterior:.1f} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
-      pdf.cell(140, 8, txt=f" Lectura Actual ({mes_facturacion}): {lectura_actual:.1f} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
-      pdf.cell(140, 8, txt=f" Consumo Neto: {consumo_neto:.1f} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
-      pdf.cell(140, 8, txt=f" Cargo por Energia (S/. {tarifa_kwh:.2f})", border='LR'); pdf.cell(50, 8, txt=f"S/. {costo_consumo:.2f} ", border='LR', align='R', ln=True)
-      pdf.cell(140, 8, txt=f" Cargo Fijo", border='LR'); pdf.cell(50, 8, txt=f"S/. {cargo_fijo:.2f} ", border='LR', align='R', ln=True)
-      pdf.cell(140, 2, txt="", border='LRB'); pdf.cell(50, 2, txt="", border='LRB', ln=True); pdf.ln(8)
-      
-      pdf.set_fill_color(230, 240, 255); pdf.set_draw_color(0, 51, 102); pdf.set_line_width(0.6) 
-      pdf.set_font("Arial", "B", 14); pdf.cell(90, 14, txt="", border=0) 
-      pdf.set_text_color(0, 51, 102); pdf.cell(50, 14, txt="TOTAL A PAGAR:", border='LTB', align='R', fill=True)
-      pdf.set_font("Arial", "B", 16); pdf.set_text_color(204, 0, 0) 
-      pdf.cell(50, 14, txt=f"S/. {total_a_pagar:.2f}", border='RTB', align='C', fill=True, ln=True)
-      
-      pdf.set_line_width(0.2); pdf.set_text_color(120, 120, 120); pdf.ln(12)
-      pdf.set_font("Arial", "I", 9); pdf.cell(190, 10, txt="Conserve este recibo para cualquier reclamo. ¡Gracias por su puntualidad!", ln=True, align='C')
-      
-      st.download_button(label="📥 Descargar Recibo (PDF Oficial)", data=pdf.output(dest='S').encode('latin-1', 'replace'), file_name=f"Recibo_{str(nombre_actual).replace(' ', '_')}_{mes_facturacion}.pdf", mime="application/pdf")
+    # A. WHATSAPP
+    telefono_usuario = str(datos_usuario["Telefono"]).strip()
+    if telefono_usuario and telefono_usuario != "nan":
+      mensaje_ws = f"⚡ *ASOCIACIÓN 4 DE ENERO* - Recibo de Luz\nHola *{nombre_actual}*, te enviamos el detalle de tu consumo:\n📍 *Ubicación:* {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}\n- Lectura anterior ({mes_origen_lectura}): {lectura_anterior:.1f} kWh\n- Lectura actual ({mes_facturacion}): {lectura_actual:.1f} kWh\n- Consumo neto: {consumo_neto:.1f} kWh\n\n💰 *TOTAL A PAGAR: S/. {total_a_pagar:.2f}*\n\nPuedes realizar el pago mediante transferencia, Yape o Plin. ¡Gracias!"
+      enlace_whatsapp = f"https://wa.me/{telefono_usuario}?text={urllib.parse.quote(mensaje_ws)}"
+      st.markdown(f'<a href="{enlace_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:12px; border-radius:8px; width: 100%; cursor: pointer; border: none; font-weight: bold; margin-bottom: 10px;">📲 Enviar Cobro por WhatsApp</button></a>', unsafe_allow_html=True)
+
+    # B. PDF 
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 18); pdf.set_text_color(0, 51, 102) 
+    pdf.cell(190, 10, txt="ASOCIACION 4 DE ENERO", ln=True, align='C')
+    pdf.set_font("Arial", "", 10); pdf.set_text_color(100, 100, 100) 
+    pdf.cell(190, 5, txt=f"Sector 7 - Iquitos | Recibo {mes_facturacion}", ln=True, align='C')
+    pdf.ln(5); pdf.set_draw_color(200, 200, 200); pdf.line(10, 30, 200, 30); pdf.ln(5)
+    
+    pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", "B", 11)
+    pdf.cell(30, 8, txt="Titular:", border=0)
+    pdf.set_font("Arial", "", 11); pdf.cell(160, 8, txt=str(nombre_actual).upper(), border=0, ln=True)
+    
+    pdf.set_font("Arial", "B", 11); pdf.cell(30, 8, txt="Direccion:", border=0)
+    pdf.set_font("Arial", "", 11); pdf.multi_cell(160, 8, txt=f"{datos_usuario['Calle']} MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}".upper(), border=0)
+    pdf.ln(5)
+    
+    pdf.set_fill_color(240, 240, 240); pdf.set_draw_color(150, 150, 150); pdf.set_font("Arial", "B", 11)
+    pdf.cell(140, 8, txt=" Descripcion del Consumo", border=1, fill=True)
+    pdf.cell(50, 8, txt=" Importe", border=1, fill=True, align='R', ln=True)
+    
+    pdf.set_font("Arial", "", 11)
+    pdf.cell(140, 8, txt=f" Lectura Anterior ({mes_origen_lectura}): {lectura_anterior:.1f} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+    pdf.cell(140, 8, txt=f" Lectura Actual ({mes_facturacion}): {lectura_actual:.1f} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+    pdf.cell(140, 8, txt=f" Consumo Neto: {consumo_neto:.1f} kWh", border='LR'); pdf.cell(50, 8, txt="", border='LR', align='R', ln=True)
+    pdf.cell(140, 8, txt=f" Cargo por Energia (S/. {tarifa_kwh:.2f})", border='LR'); pdf.cell(50, 8, txt=f"S/. {costo_consumo:.2f} ", border='LR', align='R', ln=True)
+    pdf.cell(140, 8, txt=f" Cargo Fijo", border='LR'); pdf.cell(50, 8, txt=f"S/. {cargo_fijo:.2f} ", border='LR', align='R', ln=True)
+    pdf.cell(140, 2, txt="", border='LRB'); pdf.cell(50, 2, txt="", border='LRB', ln=True); pdf.ln(8)
+    
+    pdf.set_fill_color(230, 240, 255); pdf.set_draw_color(0, 51, 102); pdf.set_line_width(0.6) 
+    pdf.set_font("Arial", "B", 14); pdf.cell(90, 14, txt="", border=0) 
+    pdf.set_text_color(0, 51, 102); pdf.cell(50, 14, txt="TOTAL A PAGAR:", border='LTB', align='R', fill=True)
+    pdf.set_font("Arial", "B", 16); pdf.set_text_color(204, 0, 0) 
+    pdf.cell(50, 14, txt=f"S/. {total_a_pagar:.2f}", border='RTB', align='C', fill=True, ln=True)
+    
+    pdf.set_line_width(0.2); pdf.set_text_color(120, 120, 120); pdf.ln(12)
+    pdf.set_font("Arial", "I", 9); pdf.cell(190, 10, txt="Conserve este recibo para cualquier reclamo. ¡Gracias por su puntualidad!", ln=True, align='C')
+    
+    st.download_button(label="📥 Descargar Recibo (PDF Oficial)", data=pdf.output(dest='S').encode('latin-1', 'replace'), file_name=f"Recibo_{str(nombre_actual).replace(' ', '_')}_{mes_facturacion}.pdf", mime="application/pdf")
