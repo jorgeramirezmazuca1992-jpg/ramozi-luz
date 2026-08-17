@@ -184,14 +184,19 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 💰 Panel de Recaudación")
     total_recaudado = sum(st.session_state.recaudacion.values())
+    
+    # Calcular Consumo Total en kWh de los leídos
+    df_procesados = st.session_state.df_usuarios[st.session_state.df_usuarios['Nombre'].isin(st.session_state.procesados_hoy)]
+    total_kwh = df_procesados['Consumo_Neto'].sum() if not df_procesados.empty else 0.0
+
     st.metric(label=f"Total Facturado ({mes_facturacion})", value=f"S/. {total_recaudado:.2f}")
+    st.metric(label="Energía Total Consumida", value=f"{total_kwh:.1f} kWh")
     
     total_usuarios = len(st.session_state.df_usuarios)
     leidos = len(st.session_state.procesados_hoy)
     st.progress(leidos / total_usuarios if total_usuarios > 0 else 0)
     st.caption(f"📊 Medidores leídos: **{leidos} de {total_usuarios}**")
 
-    # NUEVO: MODO ADMINISTRADOR PARA PURGAR HISTORIAL
     with st.expander("🛠️ Administración Avanzada (Peligro)"):
         st.warning("Usa esta opción solo si necesitas formatear la base de datos para borrar el historial acumulado.")
         if st.button("⚠️ Purgar Historial Antiguo"):
@@ -210,11 +215,13 @@ st.markdown("---")
 
 st.subheader("1. Selección de Usuario")
 
+# AHORA LA LECTURA APARECE EN EL MENÚ DESPLEGABLE DIRECTAMENTE
 st.session_state.df_usuarios["Etiqueta"] = (
     st.session_state.df_usuarios["Calle"].astype(str) + " | MZ " + 
     st.session_state.df_usuarios["MZ"].astype(str) + " - Lote " + 
     st.session_state.df_usuarios["Lote"].astype(str) + " | " + 
-    st.session_state.df_usuarios["Nombre"].astype(str)
+    st.session_state.df_usuarios["Nombre"].astype(str) + "  📉 " +
+    st.session_state.df_usuarios["Lectura_Anterior"].astype(str) + " kWh"
 )
 
 filtro_usuarios = st.radio("Filtro de búsqueda:", ("Solo Pendientes", "Todos los Usuarios"), horizontal=True)
@@ -263,7 +270,7 @@ if lectura_anterior == 0.0:
                 val = float(str(datos_usuario[col_posible]).replace(",", ".").strip())
                 if val >= 0:
                     lectura_anterior = val
-                    mes_origen_lectura = "Abril" # Default visualizado como base original
+                    mes_origen_lectura = "Abril" 
                     break
             except: pass
 
@@ -272,8 +279,17 @@ if nombre_actual in st.session_state.procesados_hoy:
 
 st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Lectura Base ({mes_origen_lectura}):** `{lectura_anterior} kWh`")
 
-cols_historia = [c for c in st.session_state.df_usuarios.columns if c.startswith("Lectura_") and c not in ["Lectura_Anterior", "Lectura_Nueva"]]
+# HISTORIAL ACTUALIZADO PARA MOSTRAR LA "BASE INICIAL"
 historial_existente = {}
+
+if "Lectura_Anterior" in datos_usuario and pd.notna(datos_usuario["Lectura_Anterior"]):
+    try:
+        v_base = float(str(datos_usuario["Lectura_Anterior"]).replace(",", ".").strip())
+        if v_base >= 0:
+            historial_existente["Base Inicial"] = f"{v_base} kWh"
+    except: pass
+
+cols_historia = [c for c in st.session_state.df_usuarios.columns if c.startswith("Lectura_") and c not in ["Lectura_Anterior", "Lectura_Nueva"]]
 for col_h in cols_historia:
     if col_h in datos_usuario and pd.notna(datos_usuario[col_h]):
         try:
