@@ -121,7 +121,7 @@ def cargar_datos_iniciales():
         else:
             df["Lectura_Anterior"] = pd.to_numeric(df["Lectura_Anterior"], errors='coerce').fillna(0.0)
 
-        if "Consumo_Neto" not in df.columns: df["Consumo_Neto"] = 0.0
+        if "Consumo_kws" not in df.columns: df["Consumo_kws"] = 0.0
         if "Total_Pagar" not in df.columns: df["Total_Pagar"] = 0.0
             
         return df
@@ -143,27 +143,54 @@ st.sidebar.markdown("### 📅 Mes de Facturación")
 mes_defecto_idx = (datetime.now().month - 2) % 12  
 mes_facturacion = st.sidebar.selectbox("Selecciona el mes a procesar:", MESES_LISTA, index=mes_defecto_idx)
 
-# LÓGICA CRONOLÓGICA DE CORTE: Identificar mes actual y mes anterior estricto
 idx_facturacion = MESES_LISTA.index(mes_facturacion)
 mes_previo = MESES_LISTA[(idx_facturacion - 1) % 12]
 
 col_historial_actual = f"Lectura_{mes_facturacion}"
 col_historial_previo = f"Lectura_{mes_previo}"
 
-# Asegurar que existan las columnas dinámicas mensuales en el DataFrame de sesión
 if col_historial_actual not in st.session_state.df_usuarios.columns:
     st.session_state.df_usuarios[col_historial_actual] = 0.0
 if col_historial_previo not in st.session_state.df_usuarios.columns:
     st.session_state.df_usuarios[col_historial_previo] = 0.0
 
-# --- BARRA LATERAL (DESCARGAS Y ADMINISTRACIÓN) ---
+# --- BARRA LATERAL (DESCARGAS Y ADMINISTRACIÓN ADAPTADO A TU IMAGEN) ---
 with st.sidebar:
     st.markdown("---")
     st.markdown("### 💾 Guardar Trabajo")
     
+    # --- 📊 CONSTRUCCIÓN DEL REPORTE EXCEL PERFECTO (SEÚN TU CAPTURA) ---
+    df_reporte = st.session_state.df_usuarios.copy()
+    
+    # Asegurar nombres solicitados
+    if 'Consumo_Neto' in df_reporte.columns:
+        df_reporte = df_reporte.rename(columns={'Consumo_Neto': 'Consumo_kws'})
+    
+    # Si 'Consumo_kws' no existe en el DataFrame original por cambios anteriores, lo creamos
+    if 'Consumo_kws' not in df_reporte.columns:
+        df_reporte['Consumo_kws'] = 0.0
+
+    # Forzar columnas requeridas por si no se han inicializado
+    df_reporte[col_historial_previo] = pd.to_numeric(df_reporte[col_historial_previo], errors='coerce').fillna(0.0)
+    df_reporte[col_historial_actual] = pd.to_numeric(df_reporte[col_historial_actual], errors='coerce').fillna(0.0)
+    
+    # Si el mes previo está en 0 por ser el primer arranque, poblarlo visualmente con la Lectura_Anterior base
+    mask_cero = df_reporte[col_historial_previo] == 0.0
+    if 'Lectura_Anterior' in df_reporte.columns:
+        df_reporte.loc[mask_cero, col_historial_previo] = df_reporte.loc[mask_cero, 'Lectura_Anterior']
+
+    # Estructurar columnas en el orden exacto de la imagen
+    columnas_finales_reporte = [
+        "Calle", "MZ", "Lote", "Nombre", "Telefono", 
+        col_historial_previo, col_historial_actual, "Consumo_kws", "Total_Pagar"
+    ]
+    
+    # Filtrar solo las columnas deseadas descartando todo lo demás
+    df_reporte_listo = df_reporte[[c for c in columnas_finales_reporte if c in df_reporte.columns]].copy()
+    
     output_reporte = io.BytesIO()
     with pd.ExcelWriter(output_reporte, engine='openpyxl') as writer:
-        st.session_state.df_usuarios.to_excel(writer, index=False, sheet_name='Reporte_Auditoria')
+        df_reporte_listo.to_excel(writer, index=False, sheet_name=f'Reporte_{mes_facturacion}')
     
     st.download_button(
         label=f"📊 1. Descargar Reporte ({mes_facturacion})",
@@ -173,14 +200,15 @@ with st.sidebar:
         use_container_width=True
     )
     
+    # --- BD PRÓXIMO MES ---
     df_proximo = st.session_state.df_usuarios.copy()
     mask = df_proximo['Nombre'].isin(st.session_state.procesados_hoy)
     df_proximo.loc[mask, 'Lectura_Anterior'] = df_proximo.loc[mask, col_historial_actual]
     
     output_db = io.BytesIO()
     with pd.ExcelWriter(output_db, engine='openpyxl') as writer:
-        cols_base = [c for c in df_proximo.columns if c not in ["Consumo_Neto", "Total_Pagar", "Etiqueta"]]
-        df_proximo[cols_base].to_excel(writer, index=False, sheet_name='Usuarios')
+        cols_base = ["Calle", "MZ", "Lote", "Nombre", "Lectura_Anterior", "Telefono"]
+        df_proximo[[c for c in cols_base if c in df_proximo.columns]].to_excel(writer, index=False, sheet_name='Usuarios')
         
     st.download_button(
         label="💾 2. Descargar BD (Próximo Mes)",
@@ -195,7 +223,7 @@ with st.sidebar:
     total_recaudado = sum(st.session_state.recaudacion.values())
     
     df_procesados = st.session_state.df_usuarios[st.session_state.df_usuarios['Nombre'].isin(st.session_state.procesados_hoy)]
-    total_kwh = df_procesados['Consumo_Neto'].sum() if not df_procesados.empty else 0.0
+    total_kwh = df_procesados['Consumo_kws'].sum() if 'Consumo_kws' in df_procesados.columns else (df_procesados['Consumo_Neto'].sum() if 'Consumo_Neto' in df_procesados.columns else 0.0)
 
     st.metric(label=f"Total Facturado ({mes_facturacion})", value=f"S/. {total_recaudado:.2f}")
     st.metric(label="Energía Total Consumida", value=f"{total_kwh:.1f} kWh")
@@ -205,26 +233,12 @@ with st.sidebar:
     st.progress(leidos / total_usuarios if total_usuarios > 0 else 0)
     st.caption(f"📊 Medidores leídos: **{leidos} de {total_usuarios}**")
 
-    with st.expander("🛠️ Administración Avanzada (Peligro)"):
-        st.warning("Usa esta opción solo si necesitas formatear la base de datos para borrar el historial acumulado.")
-        if st.button("⚠️ Purgar Historial Antiguo"):
-            cols_a_mantener = ["Calle", "MZ", "Lote", "Nombre", "Lectura_Anterior", "Telefono", "Etiqueta"]
-            cols_finales = [c for c in st.session_state.df_usuarios.columns if c in cols_a_mantener]
-            st.session_state.df_usuarios = st.session_state.df_usuarios[cols_finales]
-            st.session_state.procesados_hoy = []
-            st.session_state.recaudacion = {}
-            st.success("✅ Historial formateado. Descarga la BD y súbela a GitHub para guardar los cambios de forma permanente.")
-            st.rerun()
-
 # --- 3. INTERFAZ PRINCIPAL ---
 st.markdown("<h1 style='text-align: center; color: #1f77b4;'>⚡ Ramozi LuzApp</h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align: center; font-size: 18px; color: gray;'>Administración Asociación 4 de Enero - Facturación de <b>{mes_facturacion}</b></p>", unsafe_allow_html=True)
 st.markdown("---")
 
 st.subheader("1. Selección de Usuario")
-
-# Generar etiquetas dinámicas basadas en la lectura histórica correcta de esta sesión
-lecturas_formateadas = pd.to_numeric(st.session_state.df_usuarios["Lectura_Anterior"], errors='coerce').fillna(0.0).apply(lambda x: f"{x:.1f}")
 
 st.session_state.df_usuarios["Etiqueta"] = (
     st.session_state.df_usuarios["Calle"].astype(str) + " | MZ " + 
@@ -250,11 +264,10 @@ idx_usuario = st.session_state.df_usuarios[st.session_state.df_usuarios["Etiquet
 datos_usuario = st.session_state.df_usuarios.loc[idx_usuario]
 nombre_actual = datos_usuario['Nombre']
 
-# --- 🔥 ASIGNACIÓN EXTRACTORA CRONOLÓGICA (LOGICA DE CORTE CORREGIDA) ---
+# Extraction de lectura cronológica
 lectura_anterior = 0.0
 mes_origen_lectura = mes_previo
 
-# 1ª PRIORIDAD ABSOLUTA: Verificar el mes anterior inmediato en el historial acumulado (Ej: Si es Agosto, extrae de Julio)
 if col_historial_previo in datos_usuario and pd.notna(datos_usuario[col_historial_previo]):
     try:
         val_mes_previo = float(str(datos_usuario[col_historial_previo]).replace(",", ".").strip())
@@ -262,62 +275,23 @@ if col_historial_previo in datos_usuario and pd.notna(datos_usuario[col_historia
             lectura_anterior = val_mes_previo
     except: pass
 
-# 2ª PRIORIDAD: Si el mes anterior está en 0 porque es el primer ciclo del sistema, usa el valor estático de la BD inicial
 if lectura_anterior == 0.0:
     if "Lectura_Anterior" in datos_usuario and pd.notna(datos_usuario["Lectura_Anterior"]):
         try:
             val_base = float(str(datos_usuario["Lectura_Anterior"]).replace(",", ".").strip())
             if val_base >= 0:
                 lectura_anterior = val_base
-                mes_origen_lectura = "Base Inicial de Datos"
+                mes_origen_lectura = "Base Inicial"
         except: pass
-
-# 3ª PRIORIDAD: Búsqueda histórica profunda si los dos anteriores fallaran
-if lectura_anterior == 0.0:
-    for m_idx in range(idx_facturacion - 1, -1, -1):
-        col_m = f"Lectura_{MESES_LISTA[m_idx]}"
-        if col_m in datos_usuario and pd.notna(datos_usuario[col_m]):
-            try:
-                val = float(str(datos_usuario[col_m]).replace(",", ".").strip())
-                if val > 0:
-                    lectura_anterior = val
-                    mes_origen_lectura = MESES_LISTA[m_idx]
-                    break
-            except: pass
 
 if nombre_actual in st.session_state.procesados_hoy:
     st.success(f"✅ **¡Este medidor ya fue registrado para {mes_facturacion}!**")
 
 st.info(f"📍 **Ubicación:** {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} - Lote {datos_usuario['Lote']}\n\n📉 **Lectura Anterior Tomada ({mes_origen_lectura}):** `{lectura_anterior:.1f} kWh`")
 
-# PANEL HISTÓRICO VISUAL INFORMATIVO
-historial_existente = {}
-if "Lectura_Anterior" in datos_usuario and pd.notna(datos_usuario["Lectura_Anterior"]):
-    try:
-        v_base = float(str(datos_usuario["Lectura_Anterior"]).replace(",", ".").strip())
-        historial_existente["Base Inicial"] = f"{v_base:.1f} kWh"
-    except: pass
-
-cols_historia = [c for c in st.session_state.df_usuarios.columns if c.startswith("Lectura_") and c not in ["Lectura_Anterior", "Lectura_Nueva"]]
-for col_h in cols_historia:
-    if col_h in datos_usuario and pd.notna(datos_usuario[col_h]):
-        try:
-            v_val = float(str(datos_usuario[col_h]).replace(",", ".").strip())
-            if v_val > 0:
-                etiqueta_h = col_h.replace("Lectura_", "").replace("_", " ")
-                historial_existente[etiqueta_h] = f"{v_val:.1f} kWh"
-        except: pass
-
-if historial_existente:
-    st.markdown("#### 📜 Historial Completo en Base de Datos:")
-    cols_metrics = st.columns(min(len(historial_existente), 4))
-    for idx_h, (lbl_h, val_h) in enumerate(historial_existente.items()):
-        with cols_metrics[idx_h % 4]:
-            st.metric(label=lbl_h, value=val_h)
-
 col1, col2 = st.columns(2)
 with col1:
-  tarifa_kwh = st.number_input("Tarifa por kWh (S/.)", value=0.85, step=0.01)
+  tarifa_kwh = st.number_input("Tarifa por kWh (S/.)", value=0.65, step=0.01)
 with col2:
   cargo_fijo = st.number_input("Cargo Fijo (S/.)", value=2.00, step=0.50)
 
@@ -325,7 +299,7 @@ if nombre_actual in st.session_state.procesados_hoy:
     st.warning("Detectamos que actualizaste este medidor recientemente. ¿Hubo un error?")
     if st.button("↩️ Deshacer y Borrar Lectura Actual", type="secondary"):
         st.session_state.df_usuarios.at[idx_usuario, col_historial_actual] = 0.0
-        st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = 0.0
+        st.session_state.df_usuarios.at[idx_usuario, 'Consumo_kws'] = 0.0
         st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = 0.0
         st.session_state.procesados_hoy.remove(nombre_actual)
         if nombre_actual in st.session_state.recaudacion:
@@ -363,10 +337,10 @@ elif opcion_ingreso == "Ingreso Manual (Sin IA)":
       lectura_actual = lectura_manual_ingresada
       procesar_cobro = True
 
-# --- 5. MOTOR FINANCIERO CONSECUTIVO CORREGIDO ---
+# --- 5. MOTOR FINANCIERO ACTUALIZADO ---
 if procesar_cobro and lectura_actual is not None:
     if lectura_actual < lectura_anterior:
-      st.warning(f"🔄 **Aviso de cambio de medidor:** La lectura actual ({lectura_actual:.1f}) es menor a la anterior de {mes_origen_lectura} ({lectura_anterior:.1f}). Se tomará la lectura actual completa como el consumo neto.")
+      st.warning(f"🔄 **Aviso:** Lectura menor detectada. Se tomará la lectura actual completa como consumo.")
       consumo_neto = lectura_actual 
     else:
       consumo_neto = lectura_actual - lectura_anterior
@@ -374,9 +348,10 @@ if procesar_cobro and lectura_actual is not None:
     costo_consumo = consumo_neto * tarifa_kwh
     total_a_pagar = costo_consumo + cargo_fijo
 
-    # Guardar la lectura actual exactamente en la columna del mes seleccionado
+    # Guardar en las columnas con nombres limpios
+    st.session_state.df_usuarios.at[idx_usuario, col_historial_previo] = lectura_anterior
     st.session_state.df_usuarios.at[idx_usuario, col_historial_actual] = lectura_actual
-    st.session_state.df_usuarios.at[idx_usuario, 'Consumo_Neto'] = consumo_neto
+    st.session_state.df_usuarios.at[idx_usuario, 'Consumo_kws'] = consumo_neto
     st.session_state.df_usuarios.at[idx_usuario, 'Total_Pagar'] = total_a_pagar
     
     if nombre_actual not in st.session_state.procesados_hoy:
@@ -388,13 +363,13 @@ if procesar_cobro and lectura_actual is not None:
     st.markdown("### 📊 Liquidación Oficial del Periodo")
     st.write(f"- **Lectura del Mes Anterior ({mes_origen_lectura}):** `{lectura_anterior:.1f} kWh`")
     st.write(f"- **Lectura Nueva ({mes_facturacion}):** `{lectura_actual:.1f} kWh`")
-    st.write(f"- **Consumo Neto Calculado:** `{consumo_neto:.1f} kWh`")
+    st.write(f"- **Consumo Neto (Consumo_kws):** `{consumo_neto:.1f} kWh`")
     st.markdown(f"## **Total a Cobrar: S/. {total_a_pagar:.2f}**")
 
     # A. WHATSAPP
     telefono_usuario = str(datos_usuario["Telefono"]).strip()
     if telefono_usuario and telefono_usuario != "nan":
-      mensaje_ws = f"⚡ *ASOCIACIÓN 4 DE ENERO* - Recibo de Luz\nHola *{nombre_actual}*, te enviamos el detalle de tu consumo:\n📍 *Ubicación:* {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}\n- Lectura anterior ({mes_origen_lectura}): {lectura_anterior:.1f} kWh\n- Lectura actual ({mes_facturacion}): {lectura_actual:.1f} kWh\n- Consumo neto: {consumo_neto:.1f} kWh\n\n💰 *TOTAL A PAGAR: S/. {total_a_pagar:.2f}*\n\nPuedes realizar el pago mediante transferencia, Yape o Plin. ¡Gracias!"
+      mensaje_ws = f"⚡ *ASOCIACIÓN 4 DE ENERO* - Recibo de Luz\nHola *{nombre_actual}*, te enviamos el detalle de tu consumo:\n📍 *Ubicación:* {datos_usuario['Calle']}, MZ {datos_usuario['MZ']} Lote {datos_usuario['Lote']}\n- Lectura anterior ({mes_origen_lectura}): {lectura_anterior:.1f} kWh\n- Lectura actual ({mes_facturacion}): {lectura_actual:.1f} kWh\n- Consumo: {consumo_neto:.1f} kWh\n\n💰 *TOTAL A PAGAR: S/. {total_a_pagar:.2f}*\n\nPuedes realizar el pago mediante transferencia, Yape o Plin. ¡Gracias!"
       enlace_whatsapp = f"https://wa.me/{telefono_usuario}?text={urllib.parse.quote(mensaje_ws)}"
       st.markdown(f'<a href="{enlace_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:12px; border-radius:8px; width: 100%; cursor: pointer; border: none; font-weight: bold; margin-bottom: 10px;">📲 Enviar Cobro por WhatsApp</button></a>', unsafe_allow_html=True)
 
